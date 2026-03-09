@@ -1,0 +1,6 @@
+Name,Response
+Alice Smith,"I believe in building scalable architectures using microservices and event-driven design. Security and performance are top priorities."
+Bob Jones,"I like to write code. Sometimes I use React and build simple frontends. My CSS is okay."
+Charlie Brown,"To design an enterprise level distributed system, we should utilize Kubernetes for orchestration, Redis for caching, and Postgres. Eventual consistency is handled via Kafka."
+Diana Prince,"My approach to software engineering heavily relies on Test Driven Development and CI/CD pipelines. Quality assurance is integrated continuously."
+Evan Wright,"I write python scripts to automate simple tasks but I have not built large scale applications before."
