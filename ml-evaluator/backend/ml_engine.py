@@ -2,13 +2,17 @@ import pandas as pd
 import numpy as np
 import io
 import re
+import time
 from sentence_transformers import SentenceTransformer, CrossEncoder, util
 
 # ─── Model Configuration ──────────────────────────────────────────────────────
-# Upgraded to the most accurate bi-encoder available
-BI_ENCODER_MODEL = 'all-mpnet-base-v2'
-# Cross-encoder for precise rubric↔response scoring (jointly encodes pairs)
+# Fast + accurate bi-encoder (80MB, 6× faster than mpnet on CPU)
+BI_ENCODER_MODEL = 'all-MiniLM-L6-v2'
+# Lightweight cross-encoder for precise re-ranking
 CROSS_ENCODER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+
+# Cross-encoder is expensive: skip it when candidates × criteria > this limit
+CROSS_ENCODER_PAIR_LIMIT = 300
 
 device = 'cpu'
 bi_encoder = None
@@ -99,35 +103,39 @@ TECH_TERMS = {
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Helper functions
+#  Helper functions  (optimised for speed)
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Pre-split terms into single-word (set lookup) vs multi-word (compiled regex)
+_SINGLE_TERMS = {t for t in TECH_TERMS if ' ' not in t and '/' not in t}
+_MULTI_TERMS  = sorted([t for t in TECH_TERMS if ' ' in t or '/' in t], key=len, reverse=True)
+_MULTI_RE     = re.compile('|'.join(re.escape(t) for t in _MULTI_TERMS), re.IGNORECASE) if _MULTI_TERMS else None
+_CAP_RE       = re.compile(r'\b[A-Z][a-zA-Z0-9]{2,}\b')
+_FILLER_WORDS = frozenset({
+    'the', 'and', 'for', 'with', 'that', 'this', 'from', 'have',
+    'has', 'are', 'was', 'were', 'been', 'being', 'not', 'but',
+    'all', 'can', 'will', 'may', 'who', 'how', 'our', 'their',
+    'also', 'than', 'just', 'very', 'much', 'some', 'any', 'each',
+    'such', 'about', 'should', 'would', 'could', 'into', 'over',
+    'under', 'between', 'through', 'during', 'before', 'after',
+    'above', 'below', 'both', 'other', 'only', 'same', 'then',
+    'when', 'where', 'what', 'which', 'while', 'most',
+})
+
 def extract_tech_keywords(text: str) -> set:
-    """Extract technical keywords from text using dictionary + capitalised-word heuristic."""
-    text_lower = text.lower()
+    """Fast keyword extraction using set-lookup + one compiled regex."""
     found = set()
-
-    # Multi-word terms first (longer → shorter to avoid partial matches)
-    for term in sorted(TECH_TERMS, key=len, reverse=True):
-        if ' ' in term or '/' in term:
-            if term in text_lower:
-                found.add(term)
-        else:
-            if re.search(r'\b' + re.escape(term) + r'\b', text_lower):
-                found.add(term)
-
-    # Also catch capitalised product names not in dictionary (Kafka, Redis …)
-    filler = {'the', 'and', 'for', 'with', 'that', 'this', 'from', 'have',
-              'has', 'are', 'was', 'were', 'been', 'being', 'not', 'but',
-              'all', 'can', 'will', 'may', 'who', 'how', 'our', 'their',
-              'also', 'than', 'just', 'very', 'much', 'some', 'any', 'each',
-              'such', 'about', 'should', 'would', 'could', 'into', 'over',
-              'under', 'between', 'through', 'during', 'before', 'after',
-              'above', 'below', 'both', 'other', 'only', 'same', 'then',
-              'when', 'where', 'what', 'which', 'while', 'most'}
-    for cap in re.findall(r'\b[A-Z][a-zA-Z0-9]{2,}\b', text):
-        if cap.lower() not in filler:
-            found.add(cap.lower())
+    # Single-word terms: tokenise once, intersect with set (O(n) not O(n*m))
+    words = set(re.findall(r'[a-zA-Z0-9#+.]+', text.lower()))
+    found.update(words & _SINGLE_TERMS)
+    # Multi-word terms: single compiled regex pass
+    if _MULTI_RE:
+        found.update(m.lower() for m in _MULTI_RE.findall(text))
+    # Capitalised product names not already matched
+    for cap in _CAP_RE.findall(text):
+        cl = cap.lower()
+        if cl not in _FILLER_WORDS:
+            found.add(cl)
     return found
 
 
@@ -276,26 +284,33 @@ def evaluate_with_strict_model(
     crit_texts = [c['text'] for c in criteria]
     crit_weights = np.array([c['weight'] for c in criteria])
 
-    # ── 3. Bi-Encoder embeddings ─────────────────────────────────────────
-    print("Computing bi-encoder embeddings …")
-    crit_emb = bi_encoder.encode(crit_texts, convert_to_tensor=True,
+    # ── 3. Bi-Encoder embeddings (fast — batched) ────────────────────────
+    t0 = time.time()
+    crit_emb = bi_encoder.encode(crit_texts, batch_size=64,
+                                  convert_to_tensor=True,
                                   normalize_embeddings=True)
-    resp_emb = bi_encoder.encode(responses, convert_to_tensor=True,
-                                  normalize_embeddings=True)
+    resp_emb = bi_encoder.encode(responses, batch_size=256,
+                                  convert_to_tensor=True,
+                                  normalize_embeddings=True,
+                                  show_progress_bar=False)
     bi_scores = util.dot_score(resp_emb, crit_emb).cpu().numpy()
+    print(f"⚡ Bi-encoder done in {time.time()-t0:.2f}s  ({n_cand} candidates × {n_crit} criteria)")
 
-    # ── 4. Cross-Encoder (precise pair-wise scoring) ─────────────────────
+    # ── 4. Cross-Encoder (precise but slow — auto-skip for large sets) ───
+    total_pairs = n_cand * n_crit
+    use_cross = cross_encoder is not None and total_pairs <= CROSS_ENCODER_PAIR_LIMIT
     cx_scores = np.zeros((n_cand, n_crit))
-    if cross_encoder is not None:
-        print("Computing cross-encoder scores …")
-        pairs = []
-        for i in range(n_cand):
-            for j in range(n_crit):
-                pairs.append((responses[i], crit_texts[j]))
-        raw = cross_encoder.predict(pairs, batch_size=64)
+    if use_cross:
+        t1 = time.time()
+        pairs = [(responses[i], crit_texts[j])
+                 for i in range(n_cand) for j in range(n_crit)]
+        raw = cross_encoder.predict(pairs, batch_size=128,
+                                    show_progress_bar=False)
         cx_scores = sigmoid(np.array(raw).reshape(n_cand, n_crit))
+        print(f"⚡ Cross-encoder done in {time.time()-t1:.2f}s  ({total_pairs} pairs)")
     else:
-        print("Cross-encoder unavailable — using bi-encoder only.")
+        reason = "too many pairs" if cross_encoder else "unavailable"
+        print(f"⏩ Cross-encoder skipped ({reason}: {total_pairs} pairs > {CROSS_ENCODER_PAIR_LIMIT}) — bi-encoder only")
 
     # ── 5. Adaptive thresholds (tuned by strictness 0–1) ────────────────
     POINT_PASS    = 0.25 + strictness_threshold * 0.20   # 0.25 – 0.45
@@ -306,10 +321,15 @@ def evaluate_with_strict_model(
     print(f"  POINT_PASS={POINT_PASS:.2f}  HIRE={HIRE_THRESH:.2f}  "
           f"BORDERLINE={BORDER_THRESH:.2f}")
 
-    # ── 6. Score each candidate ──────────────────────────────────────────
+    # ── 6. Pre-extract all candidate keywords (batch, once) ────────────
+    t2 = time.time()
+    all_cand_kw = [extract_tech_keywords(r) for r in responses]
+    print(f"⚡ Keyword extraction done in {time.time()-t2:.2f}s")
+
+    # ── 7. Score each candidate ──────────────────────────────────────────
     results = []
     for i in range(n_cand):
-        cand_kw = extract_tech_keywords(responses[i])
+        cand_kw = all_cand_kw[i]
         point_details = []
         weighted_pts = []
 
@@ -319,8 +339,8 @@ def evaluate_with_strict_model(
             ckw   = criteria[j]['keywords']
             kw_ov = (len(ckw & cand_kw) / len(ckw)) if ckw else 0.0
 
-            # Combine signals (cross-encoder is most accurate when available)
-            if cross_encoder is not None:
+            # Combine signals — adapt weights based on whether cross-encoder ran
+            if use_cross:
                 pt_score = 0.50 * cx_s + 0.30 * bi_s + 0.20 * kw_ov
             else:
                 pt_score = 0.55 * bi_s + 0.45 * kw_ov
@@ -428,6 +448,8 @@ def evaluate_with_strict_model(
                   f"cx={pd_['cross_score']:.2f} kw={pd_['keyword_overlap']:.2f}  "
                   f"{pd_['rubric_point'][:55]}")
 
+    total_time = time.time() - t0
+    print(f"\n🏁 Total evaluation: {total_time:.2f}s for {n_cand} candidates")
     return results
 
 
