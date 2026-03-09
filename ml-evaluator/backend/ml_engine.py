@@ -1,190 +1,454 @@
 import pandas as pd
 import numpy as np
 import io
-import torch
 import re
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import SentenceTransformer, CrossEncoder, util
 
-# Using an ultra-fast Bi-Encoder model (near-instant on CPU)
-MODEL_NAME = 'all-MiniLM-L6-v2'
+# ─── Model Configuration ──────────────────────────────────────────────────────
+# Upgraded to the most accurate bi-encoder available
+BI_ENCODER_MODEL = 'all-mpnet-base-v2'
+# Cross-encoder for precise rubric↔response scoring (jointly encodes pairs)
+CROSS_ENCODER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
 
-# Force CPU for stability and consistent performance on Mac
 device = 'cpu'
+bi_encoder = None
+cross_encoder = None
 
 try:
-    print(f"Loading Ultra-Fast Bi-Encoder {MODEL_NAME} on {device}...")
-    # Bi-Encoders are much faster because they encode texts independently
-    model = SentenceTransformer(MODEL_NAME, device=device)
+    print(f"[1/2] Loading Bi-Encoder: {BI_ENCODER_MODEL} …")
+    bi_encoder = SentenceTransformer(BI_ENCODER_MODEL, device=device)
+    print(f"      ✓ Bi-Encoder ready")
 except Exception as e:
-    model = None
-    print(f"Warning: Failed to load model {MODEL_NAME}: {e}")
+    print(f"      ✗ Bi-Encoder failed: {e}")
 
-def parse_rubric_points(rubric_text: str):
-    """
-    Splits the rubric into individual requirements based on newlines, bullets, or numbering.
-    """
-    points = re.split(r'\n+|\s*[\*\-•]\s+|\s*\d+\.\s+', rubric_text)
-    points = [p.strip() for p in points if len(p.strip()) > 10]
-    
-    if not points:
-        return [rubric_text.strip()]
-        
-    # Filter out empty or non-technical introductory sentences common in rubrics
-    filtered_points = []
-    for p in points:
-        word_count = len(p.split())
-        # Usually, meaningful technical requirements have at least 3-4 words.
-        if word_count >= 4 and not p.lower().startswith("we are looking") and not p.lower().startswith("the ideal candidate"):
-            filtered_points.append(p)
-            
-    if not filtered_points:
-        return points # Fallback if filtering stripped everything
-    return filtered_points
+try:
+    print(f"[2/2] Loading Cross-Encoder: {CROSS_ENCODER_MODEL} …")
+    cross_encoder = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
+    print(f"      ✓ Cross-Encoder ready")
+except Exception as e:
+    print(f"      ✗ Cross-Encoder unavailable (falling back to bi-encoder only): {e}")
 
-def extract_keywords(text: str):
-    """
-    Extracts potential technical keywords (capitalized or common tech terms).
-    """
-    # Look for capitalized words (e.g., Postgres, Redis, Kafka) or common tech terms
-    tech_keywords = set(re.findall(r'\b[A-Z][a-zA-Z0-9]+\b|\b(?:python|fastapi|docker|kubernetes|aws|cloud|sql|nosql|javascript|react)\b', text.lower()))
-    return tech_keywords
 
-def evaluate_with_strict_model(candidates_df: pd.DataFrame, rubric_text: str, strictness_threshold: float = 0.5):
-    """
-    Evaluates candidates using a Bi-Encoder + Weighted Scoring + Keyword Boosting.
-    """
-    if model is None:
-        raise RuntimeError("Deep learning model failed to load in backend.")
+# ─── Comprehensive Technical Keyword Dictionary ───────────────────────────────
+TECH_TERMS = {
+    # Programming Languages
+    'python', 'java', 'javascript', 'typescript', 'golang', 'go', 'rust',
+    'c++', 'cpp', 'c#', 'csharp', 'ruby', 'php', 'swift', 'kotlin', 'scala',
+    'r', 'matlab', 'perl', 'shell', 'bash', 'powershell', 'lua', 'haskell',
+    'elixir', 'clojure', 'dart',
+    # Web Frameworks
+    'react', 'reactjs', 'angular', 'vue', 'vuejs', 'svelte', 'django',
+    'flask', 'fastapi', 'spring', 'springboot', 'express', 'expressjs',
+    'node', 'nodejs', 'next', 'nextjs', 'nuxt', 'rails', 'laravel',
+    'dotnet', 'asp.net', 'gin', 'fiber', 'actix', 'phoenix',
+    # ML / AI
+    'tensorflow', 'pytorch', 'keras', 'scikit-learn', 'sklearn', 'pandas',
+    'numpy', 'transformers', 'huggingface', 'opencv', 'spacy', 'nltk',
+    'xgboost', 'lightgbm', 'machine learning', 'deep learning',
+    'neural network', 'nlp', 'computer vision', 'reinforcement learning',
+    'generative ai', 'llm', 'gpt', 'bert',
+    # Databases
+    'sql', 'nosql', 'postgres', 'postgresql', 'mysql', 'mongodb', 'redis',
+    'memcached', 'cassandra', 'dynamodb', 'elasticsearch', 'opensearch',
+    'sqlite', 'oracle', 'mariadb', 'neo4j', 'influxdb', 'cockroachdb',
+    'supabase', 'firebase',
+    # Cloud & Infra
+    'docker', 'kubernetes', 'k8s', 'aws', 'amazon web services', 'azure',
+    'gcp', 'google cloud', 'terraform', 'ansible', 'puppet', 'chef',
+    'cloudformation', 'pulumi', 'helm', 'istio', 'envoy',
+    # DevOps / CI-CD
+    'jenkins', 'ci/cd', 'cicd', 'github actions', 'gitlab ci', 'circleci',
+    'argocd', 'spinnaker', 'tekton',
+    # Messaging / Streaming
+    'kafka', 'rabbitmq', 'sqs', 'sns', 'nats', 'pulsar', 'kinesis',
+    'event-driven', 'pub/sub', 'pubsub', 'message queue', 'streaming',
+    # Web & API
+    'rest', 'restful', 'graphql', 'grpc', 'websocket', 'api',
+    'microservices', 'serverless', 'lambda', 'oauth', 'jwt', 'openapi',
+    # Architecture
+    'distributed systems', 'distributed', 'scalable', 'architecture',
+    'design patterns', 'solid', 'clean architecture', 'domain driven',
+    'ddd', 'cqrs', 'event sourcing', 'saga', 'circuit breaker',
+    'load balancing', 'high availability', 'fault tolerance',
+    'cap theorem', 'eventual consistency',
+    # Testing & Quality
+    'tdd', 'test driven', 'bdd', 'unit test', 'integration test', 'e2e',
+    'selenium', 'cypress', 'jest', 'pytest', 'junit', 'testing',
+    'code review', 'quality assurance', 'qa',
+    # Security
+    'security', 'encryption', 'authentication', 'authorization', 'ssl',
+    'tls', 'https', 'firewall', 'waf', 'penetration testing', 'owasp',
+    'sso', 'saml', 'rbac', 'zero trust',
+    # Observability
+    'monitoring', 'logging', 'observability', 'prometheus', 'grafana',
+    'datadog', 'splunk', 'elk', 'kibana', 'jaeger', 'opentelemetry',
+    # Methodologies
+    'agile', 'scrum', 'kanban', 'devops', 'sre', 'gitops',
+    # Infra misc
+    'containers', 'orchestration', 'deployment', 'pipeline',
+    'performance', 'optimization', 'caching', 'cdn', 'profiling',
+    'nginx', 'apache', 'linux', 'networking',
+    # Data Eng
+    'etl', 'data pipeline', 'data warehouse', 'data lake', 'spark',
+    'hadoop', 'airflow', 'dbt', 'snowflake', 'redshift', 'bigquery',
+    # Version Control
+    'git', 'github', 'gitlab', 'bitbucket',
+    # Mobile
+    'ios', 'android', 'react native', 'flutter', 'mobile',
+}
 
-    # 1. Advanced Column Detection
-    response_coll = None
-    name_coll = None
-    
-    text_cols = [col for col in candidates_df.columns if candidates_df[col].dtype == object]
-    
-    # Priority search for Name and Response
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Helper functions
+# ──────────────────────────────────────────────────────────────────────────────
+
+def extract_tech_keywords(text: str) -> set:
+    """Extract technical keywords from text using dictionary + capitalised-word heuristic."""
+    text_lower = text.lower()
+    found = set()
+
+    # Multi-word terms first (longer → shorter to avoid partial matches)
+    for term in sorted(TECH_TERMS, key=len, reverse=True):
+        if ' ' in term or '/' in term:
+            if term in text_lower:
+                found.add(term)
+        else:
+            if re.search(r'\b' + re.escape(term) + r'\b', text_lower):
+                found.add(term)
+
+    # Also catch capitalised product names not in dictionary (Kafka, Redis …)
+    filler = {'the', 'and', 'for', 'with', 'that', 'this', 'from', 'have',
+              'has', 'are', 'was', 'were', 'been', 'being', 'not', 'but',
+              'all', 'can', 'will', 'may', 'who', 'how', 'our', 'their',
+              'also', 'than', 'just', 'very', 'much', 'some', 'any', 'each',
+              'such', 'about', 'should', 'would', 'could', 'into', 'over',
+              'under', 'between', 'through', 'during', 'before', 'after',
+              'above', 'below', 'both', 'other', 'only', 'same', 'then',
+              'when', 'where', 'what', 'which', 'while', 'most'}
+    for cap in re.findall(r'\b[A-Z][a-zA-Z0-9]{2,}\b', text):
+        if cap.lower() not in filler:
+            found.add(cap.lower())
+    return found
+
+
+def parse_rubric_criteria(rubric_text: str) -> list:
+    """
+    Parse rubric text into individual criteria with priority detection.
+    Returns list of dicts: {text, priority, keywords, weight}
+    """
+    # Split on bullets / numbers / newlines
+    raw = re.split(r'\n+|\s*[\*\-•–]\s+|\s*\d+[\.\)]\s+', rubric_text)
+    raw = [p.strip() for p in raw if len(p.strip()) > 5]
+
+    skip_starts = [
+        'we are looking', 'the ideal candidate', 'looking for',
+        'about the role', 'job description', 'requirements include',
+        'the candidate should', 'the candidate must',
+    ]
+
+    criteria = []
+    for point in raw:
+        if len(point.split()) < 3:
+            continue
+        lower = point.lower()
+        if any(lower.startswith(s) for s in skip_starts):
+            continue
+
+        # Priority detection
+        must_kw = ['must', 'required', 'essential', 'critical', 'mandatory', 'strong']
+        nice_kw = ['preferred', 'nice to have', 'bonus', 'plus', 'ideally', 'optional']
+        if any(k in lower for k in must_kw):
+            priority, weight = 'must-have', 1.5
+        elif any(k in lower for k in nice_kw):
+            priority, weight = 'nice-to-have', 0.7
+        else:
+            priority, weight = 'normal', 1.0
+
+        criteria.append({
+            'text': point,
+            'priority': priority,
+            'keywords': extract_tech_keywords(point),
+            'weight': weight,
+        })
+
+    if not criteria:
+        return [{
+            'text': rubric_text.strip(),
+            'priority': 'normal',
+            'keywords': extract_tech_keywords(rubric_text),
+            'weight': 1.0,
+        }]
+    return criteria
+
+
+def detect_columns(df: pd.DataFrame):
+    """Return (name_col, response_col) after smart auto-detection."""
+    text_cols = [c for c in df.columns if df[c].dtype == object]
+    name_col = response_col = None
+
     for col in text_cols:
-        col_lower = str(col).lower()
-        if "name" in col_lower:
-            name_coll = col
-        if any(term in col_lower for term in ["response", "answer", "text", "description", "resume"]):
-            response_coll = col
+        cl = str(col).lower().strip()
+        if any(t in cl for t in ['name', 'candidate', 'applicant', 'person']):
+            name_col = col
+        if any(t in cl for t in ['response', 'answer', 'text', 'description',
+                                  'resume', 'summary', 'experience', 'skills',
+                                  'qualification', 'background', 'about']):
+            response_col = col
 
-    # Fallbacks
-    if not name_coll:
-        name_coll = text_cols[0] if text_cols else candidates_df.columns[0]
-    if not response_coll:
-        # If no explicit response col, pick the one with longest average text
-        max_len = 0
+    if not name_col:
+        name_col = text_cols[0] if text_cols else df.columns[0]
+    if not response_col:
+        best, best_len = None, 0
         for col in text_cols:
-            avg_len = candidates_df[col].astype(str).apply(len).mean()
-            if avg_len > max_len:
-                max_len = avg_len
-                response_coll = col
-    
-    if not response_coll:
-        raise ValueError("Could not auto-detect a text response column.")
+            if col == name_col:
+                continue
+            avg = df[col].astype(str).apply(len).mean()
+            if avg > best_len:
+                best, best_len = col, avg
+        response_col = best or (text_cols[-1] if len(text_cols) > 1 else text_cols[0])
+    return name_col, response_col
 
-    responses = candidates_df[response_coll].fillna("").astype(str).tolist()
-    names = candidates_df[name_coll].fillna("Unknown").astype(str).tolist()
 
+def build_full_response(row, name_col: str, text_cols: list) -> str:
+    """Merge every text column (except name) into one string."""
+    parts = []
+    for col in text_cols:
+        if col == name_col:
+            continue
+        val = str(row[col]).strip()
+        if val and val.lower() not in ('nan', 'none', '', 'n/a', '-'):
+            parts.append(val)
+    return ' '.join(parts)
+
+
+def sigmoid(x):
+    x = np.asarray(x, dtype=np.float64)
+    return np.where(x >= 0,
+                    1 / (1 + np.exp(-x)),
+                    np.exp(x) / (1 + np.exp(x)))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Core evaluation
+# ──────────────────────────────────────────────────────────────────────────────
+
+def evaluate_with_strict_model(
+    candidates_df: pd.DataFrame,
+    rubric_text: str,
+    strictness_threshold: float = 0.55,
+):
+    """
+    Multi-signal evaluation pipeline:
+      Bi-Encoder (fast semantic) + Cross-Encoder (precise) + Keyword overlap
+      → per-criterion scores → weighted aggregate → calibrated decision.
+    """
+    if bi_encoder is None:
+        raise RuntimeError("Bi-encoder model failed to load — cannot evaluate.")
+
+    # ── 1. Parse rubric ──────────────────────────────────────────────────
+    criteria = parse_rubric_criteria(rubric_text)
+    all_rubric_kw = set()
+    for c in criteria:
+        all_rubric_kw.update(c['keywords'])
+
+    print(f"\n{'=' * 60}")
+    print(f"Parsed {len(criteria)} rubric criteria:")
+    for idx, c in enumerate(criteria):
+        print(f"  [{idx+1}] (w={c['weight']:.1f}) {c['text'][:80]}")
+        print(f"       kw: {c['keywords']}")
+    print(f"All rubric keywords ({len(all_rubric_kw)}): {all_rubric_kw}")
+    print(f"{'=' * 60}\n")
+
+    # ── 2. Detect columns & build texts ──────────────────────────────────
+    name_col, resp_col = detect_columns(candidates_df)
+    text_cols = [c for c in candidates_df.columns if candidates_df[c].dtype == object]
+
+    names = candidates_df[name_col].fillna("Unknown").astype(str).tolist()
+    responses = [
+        build_full_response(row, name_col, text_cols)
+        for _, row in candidates_df.iterrows()
+    ]
     if not responses:
         return []
 
-    rubric_points = parse_rubric_points(rubric_text)
-    num_candidates = len(responses)
-    num_points = len(rubric_points)
-    
-    # Pre-extract keywords from rubric
-    rubric_keywords = extract_keywords(rubric_text)
-    print(f"Extracted Rubric Keywords: {rubric_keywords}")
+    n_cand = len(responses)
+    n_crit = len(criteria)
+    crit_texts = [c['text'] for c in criteria]
+    crit_weights = np.array([c['weight'] for c in criteria])
 
-    # 1. Encode Rubric Points (Pre-calculate)
-    rubric_embeddings = model.encode(rubric_points, batch_size=32, convert_to_tensor=True, normalize_embeddings=True)
-    
-    # 2. Encode Candidate Responses
-    response_embeddings = model.encode(responses, batch_size=128, convert_to_tensor=True, normalize_embeddings=True)
+    # ── 3. Bi-Encoder embeddings ─────────────────────────────────────────
+    print("Computing bi-encoder embeddings …")
+    crit_emb = bi_encoder.encode(crit_texts, convert_to_tensor=True,
+                                  normalize_embeddings=True)
+    resp_emb = bi_encoder.encode(responses, convert_to_tensor=True,
+                                  normalize_embeddings=True)
+    bi_scores = util.dot_score(resp_emb, crit_emb).cpu().numpy()
 
-    # 3. Compute Similarity Matrix
-    cosine_scores = util.dot_score(response_embeddings, rubric_embeddings).numpy()
+    # ── 4. Cross-Encoder (precise pair-wise scoring) ─────────────────────
+    cx_scores = np.zeros((n_cand, n_crit))
+    if cross_encoder is not None:
+        print("Computing cross-encoder scores …")
+        pairs = []
+        for i in range(n_cand):
+            for j in range(n_crit):
+                pairs.append((responses[i], crit_texts[j]))
+        raw = cross_encoder.predict(pairs, batch_size=64)
+        cx_scores = sigmoid(np.array(raw).reshape(n_cand, n_crit))
+    else:
+        print("Cross-encoder unavailable — using bi-encoder only.")
 
-    # Thresholds adjusted to ensure candidates with 12.22+ are selected
-    HIRE_THRESHOLD = 0.1222
-    BORDERLINE_THRESHOLD = 0.08
-    ITEM_PASS_THRESHOLD = 0.15
+    # ── 5. Adaptive thresholds (tuned by strictness 0–1) ────────────────
+    POINT_PASS    = 0.25 + strictness_threshold * 0.20   # 0.25 – 0.45
+    HIRE_THRESH   = 0.42 + strictness_threshold * 0.18   # 0.42 – 0.60
+    BORDER_THRESH = 0.28 + strictness_threshold * 0.14   # 0.28 – 0.42
 
+    print(f"Thresholds  (strictness={strictness_threshold:.2f}):")
+    print(f"  POINT_PASS={POINT_PASS:.2f}  HIRE={HIRE_THRESH:.2f}  "
+          f"BORDERLINE={BORDER_THRESH:.2f}")
+
+    # ── 6. Score each candidate ──────────────────────────────────────────
     results = []
-    for i in range(num_candidates):
-        item_scores = cosine_scores[i]
-        
-        # --- Advanced Scoring Logic ---
-        
-        # A) Weighted Average: Top matches matter more than the poor matches
-        # This prevents penalizing for not covering 100% of the rubric if they are strong in key areas
-        sorted_scores = sorted(item_scores, reverse=True)
-        top_k = min(3, len(sorted_scores))
-        top_mean = np.mean(sorted_scores[:top_k]) if top_k > 0 else 0
-        overall_mean = np.mean(item_scores)
-        
-        # Weighting: 70% toward their best strengths, 30% toward general coverage
-        weighted_score = (0.7 * top_mean) + (0.3 * overall_mean)
-        
-        # B) Keyword Bonus
-        cand_keywords = extract_keywords(responses[i])
-        found_keywords = rubric_keywords.intersection(cand_keywords)
-        keyword_bonus = len(found_keywords) * 0.02 # 2% boost per keyword match
-        
-        final_score = weighted_score + keyword_bonus
-        # Cap at 0.95 to stay realistic
-        final_score = min(final_score, 0.95)
+    for i in range(n_cand):
+        cand_kw = extract_tech_keywords(responses[i])
+        point_details = []
+        weighted_pts = []
 
-        # Precise Decision Mapping as per user requirement:
-        # > 12.22 is Hire, Exactly 12.22 is Borderline, < 12.22 is Reject
-        score_rounded = round(final_score, 4)
-        if score_rounded > 0.1222:
+        for j in range(n_crit):
+            bi_s  = float(bi_scores[i][j])
+            cx_s  = float(cx_scores[i][j])
+            ckw   = criteria[j]['keywords']
+            kw_ov = (len(ckw & cand_kw) / len(ckw)) if ckw else 0.0
+
+            # Combine signals (cross-encoder is most accurate when available)
+            if cross_encoder is not None:
+                pt_score = 0.50 * cx_s + 0.30 * bi_s + 0.20 * kw_ov
+            else:
+                pt_score = 0.55 * bi_s + 0.45 * kw_ov
+
+            point_details.append({
+                'rubric_point': crit_texts[j],
+                'score': round(pt_score, 4),
+                'bi_score': round(bi_s, 4),
+                'cross_score': round(cx_s, 4),
+                'keyword_overlap': round(kw_ov, 4),
+                'matched_keywords': sorted(ckw & cand_kw),
+                'passed': pt_score >= POINT_PASS,
+            })
+            weighted_pts.append(pt_score * crit_weights[j])
+
+        pt_arr = np.array([p['score'] for p in point_details])
+
+        # --- Aggregate signals ---
+        w_mean    = np.sum(weighted_pts) / np.sum(crit_weights)
+        coverage  = np.mean([1.0 if p['passed'] else 0.0 for p in point_details])
+        top_k     = max(1, n_crit // 2)
+        strength  = float(np.mean(sorted(pt_arr, reverse=True)[:top_k]))
+        global_kw = (len(all_rubric_kw & cand_kw) / len(all_rubric_kw)) if all_rubric_kw else 0.0
+        depth     = min(1.0, len(responses[i].split()) / 20.0)
+
+        final = (
+            0.35 * w_mean +
+            0.25 * coverage +
+            0.20 * strength +
+            0.10 * global_kw +
+            0.10 * depth
+        )
+        final = min(final, 0.99)
+
+        # Decision
+        if final >= HIRE_THRESH:
             decision = "Hire"
-        elif score_rounded == 0.1222:
+        elif final >= BORDER_THRESH:
             decision = "Borderline"
         else:
             decision = "Reject"
-            
-        # Detailed Reasoning
-        satisfied_count = sum(1 for s in item_scores if s >= ITEM_PASS_THRESHOLD)
-        reason = f"Weighted Alignment: {final_score:.2f} (Base: {weighted_score:.2f} + Bonus: {keyword_bonus:.2f}).\n"
-        reason += f"Matched {len(found_keywords)} key tech terms: {', '.join(list(found_keywords)[:5])}.\n"
-        
+
+        # --- Build reasoning ---
+        matched_kw_all = sorted(all_rubric_kw & cand_kw)
+        sorted_pts = sorted(point_details, key=lambda x: x['score'], reverse=True)
+
+        reason_lines = []
         if decision == "Hire":
-            reason += "Strong evidence of expertise in core requirements."
+            reason_lines.append(
+                f"✅ Strong candidate — {coverage*100:.0f}% rubric coverage, "
+                f"{final*100:.1f}% overall alignment."
+            )
         elif decision == "Borderline":
-            reason += "Shows competency but lacks breadth or specific keyword alignment."
+            reason_lines.append(
+                f"⚠️ Borderline — {coverage*100:.0f}% rubric coverage, "
+                f"{final*100:.1f}% alignment. Some gaps present."
+            )
         else:
-            reason += "Limited alignment with technical rubric requirements."
+            reason_lines.append(
+                f"❌ Below threshold — {coverage*100:.0f}% coverage, "
+                f"{final*100:.1f}% alignment."
+            )
+
+        if matched_kw_all:
+            reason_lines.append(f"Matched terms: {', '.join(matched_kw_all[:10])}.")
+        else:
+            reason_lines.append("No key technical terms matched.")
+
+        if sorted_pts:
+            best = sorted_pts[0]
+            reason_lines.append(
+                f"Strongest area: \"{best['rubric_point'][:70]}\" "
+                f"({best['score']*100:.0f}%)."
+            )
+        if len(sorted_pts) > 1:
+            worst = sorted_pts[-1]
+            if not worst['passed']:
+                reason_lines.append(
+                    f"Weakest area: \"{worst['rubric_point'][:70]}\" "
+                    f"({worst['score']*100:.0f}%)."
+                )
 
         results.append({
             "id": str(i + 1),
             "name": names[i],
-            "score": round(final_score * 100, 2),
+            "score": round(final * 100, 2),
             "decision": decision,
-            "reason": reason,
-            "response_snippet": responses[i][:100] + "..." if len(responses[i]) > 100 else responses[i]
+            "reason": "\n".join(reason_lines),
+            "response_snippet": (responses[i][:150] + "…")
+                if len(responses[i]) > 150 else responses[i],
+            "point_scores": point_details,
+            "coverage": round(coverage * 100, 1),
+            "keyword_match_rate": round(global_kw * 100, 1),
         })
-        
-        # Diagnostic Log
-        print(f"Debug [Candidate {i+1}]: {names[i]} | Mean: {overall_mean:.3f} | Top3Avg: {top_mean:.3f} | Weighted: {weighted_score:.3f} | Final: {final_score:.3f}")
-        
+
+        # Debug log
+        print(f"\n{'─' * 55}")
+        print(f"  Candidate {i+1}: {names[i]}")
+        print(f"  wMean={w_mean:.3f}  coverage={coverage:.2f}  "
+              f"strength={strength:.3f}  kwCov={global_kw:.2f}  depth={depth:.2f}")
+        print(f"  ★ FINAL={final:.4f}  →  {decision}")
+        for pd_ in point_details:
+            tag = "✓" if pd_['passed'] else "✗"
+            print(f"    {tag} [{pd_['score']:.3f}] bi={pd_['bi_score']:.2f} "
+                  f"cx={pd_['cross_score']:.2f} kw={pd_['keyword_overlap']:.2f}  "
+                  f"{pd_['rubric_point'][:55]}")
+
     return results
 
-def process_evaluation_request(candidates_file_bytes: bytes, rubric_text: bytes, candidates_filename: str):
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Entry point called from FastAPI
+# ──────────────────────────────────────────────────────────────────────────────
+
+def process_evaluation_request(
+    candidates_file_bytes: bytes,
+    rubric_text: bytes,
+    candidates_filename: str,
+):
     try:
         if candidates_filename.endswith('.csv'):
             df = pd.read_csv(io.BytesIO(candidates_file_bytes))
         else:
             df = pd.read_excel(io.BytesIO(candidates_file_bytes))
-            
+
         text = rubric_text.decode('utf-8', errors='ignore')
-        # Setting a default strictness threshold of 0.50 for Bi-Encoder Cosine Similarity
-        results = evaluate_with_strict_model(df, text, strictness_threshold=0.50)
-        
+        results = evaluate_with_strict_model(df, text, strictness_threshold=0.55)
+
         return {
             "status": "success",
             "data": results,
@@ -192,11 +456,10 @@ def process_evaluation_request(candidates_file_bytes: bytes, rubric_text: bytes,
                 "total": len(results),
                 "hired": sum(1 for r in results if r['decision'] == 'Hire'),
                 "borderline": sum(1 for r in results if r['decision'] == 'Borderline'),
-                "rejected": sum(1 for r in results if r['decision'] == 'Reject')
-            }
+                "rejected": sum(1 for r in results if r['decision'] == 'Reject'),
+            },
         }
     except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}

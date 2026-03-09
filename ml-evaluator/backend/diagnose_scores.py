@@ -27,6 +27,14 @@ results = evaluate_with_strict_model(candidates, rubric_text)
 
 for r in results:
     print(f"\nCandidate: {r['name']}")
-    print(f"Final Score: {r['score']/100}")
+    print(f"Final Score: {r['score']}%")
     print(f"Decision: {r['decision']}")
+    print(f"Coverage: {r.get('coverage', 'N/A')}% | Keywords: {r.get('keyword_match_rate', 'N/A')}%")
     print(f"Reason: {r['reason']}")
+    if r.get('point_scores'):
+        print("Per-rubric breakdown:")
+        for ps in r['point_scores']:
+            tag = '✓' if ps['passed'] else '✗'
+            print(f"  {tag} [{ps['score']*100:.0f}%] {ps['rubric_point'][:60]}")
+            if ps['matched_keywords']:
+                print(f"    Matched: {', '.join(ps['matched_keywords'])}")

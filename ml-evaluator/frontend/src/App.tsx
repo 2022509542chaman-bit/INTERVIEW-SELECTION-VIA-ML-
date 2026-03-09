@@ -1,19 +1,30 @@
 import { useState, useEffect } from 'react'
-import { Upload, FileType, CheckCircle, XCircle, FileText, ChevronRight, Sparkles } from 'lucide-react'
+import { Upload, FileType, CheckCircle, XCircle, AlertTriangle, FileText, ChevronRight, ChevronDown, Sparkles } from 'lucide-react'
 import { SpiralAnimation } from '@/components/ui/spiral-animation'
+
+interface PointScore {
+  rubric_point: string;
+  score: number;
+  matched_keywords: string[];
+  passed: boolean;
+}
 
 interface EvaluationResult {
   id: string;
   name: string;
   score: number;
-  decision: 'Hire' | 'Reject';
+  decision: 'Hire' | 'Borderline' | 'Reject';
   reason: string;
   response_snippet: string;
+  point_scores?: PointScore[];
+  coverage?: number;
+  keyword_match_rate?: number;
 }
 
 interface Summary {
   total: number;
   hired: number;
+  borderline: number;
   rejected: number;
 }
 
@@ -28,6 +39,7 @@ function App() {
   const [results, setResults] = useState<EvaluationResult[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Show enter button after a delay
   useEffect(() => {
@@ -271,7 +283,7 @@ function App() {
         {results.length > 0 && summary && (
           <section className="space-y-6 animate-fadeIn">
             {/* Dashboard Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl p-6 border border-slate-800 flex flex-col justify-center">
                 <span className="text-slate-500 font-medium tracking-wide text-sm uppercase mb-2">Total Analyzed</span>
                 <span className="text-4xl font-bold text-white">{summary.total}</span>
@@ -279,6 +291,10 @@ function App() {
               <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl p-6 border border-emerald-500/20 border-b-2 border-b-emerald-500 flex flex-col justify-center">
                 <span className="text-emerald-400 font-medium tracking-wide text-sm uppercase mb-2">Recommended Hire</span>
                 <span className="text-4xl font-bold text-emerald-400">{summary.hired}</span>
+              </div>
+              <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl p-6 border border-amber-500/20 border-b-2 border-b-amber-500 flex flex-col justify-center">
+                <span className="text-amber-400 font-medium tracking-wide text-sm uppercase mb-2">Borderline</span>
+                <span className="text-4xl font-bold text-amber-400">{summary.borderline}</span>
               </div>
               <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl p-6 border border-red-500/20 border-b-2 border-b-red-500 flex flex-col justify-center">
                 <span className="text-red-400 font-medium tracking-wide text-sm uppercase mb-2">Rejected</span>
@@ -320,23 +336,85 @@ function App() {
                   </thead>
                   <tbody className="divide-y divide-slate-800/50">
                     {results.map((res) => (
-                      <tr key={res.id} className="hover:bg-slate-800/30 transition-colors">
-                        <td className="px-6 py-4 font-medium text-white">{res.name}</td>
-                        <td className="px-6 py-4 text-slate-300 font-mono text-sm">{res.score}</td>
+                      <>
+                      <tr key={res.id} className="hover:bg-slate-800/30 transition-colors cursor-pointer" onClick={() => setExpandedId(expandedId === res.id ? null : res.id)}>
+                        <td className="px-6 py-4 font-medium text-white">
+                          <div className="flex items-center gap-2">
+                            <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${expandedId === res.id ? 'rotate-180' : ''}`} />
+                            {res.name}
+                          </div>
+                        </td>
                         <td className="px-6 py-4">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${res.decision === 'Hire'
+                          <div className="flex items-center gap-2">
+                            <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
+                              <div className={`h-full rounded-full ${
+                                res.score >= 55 ? 'bg-emerald-500' : res.score >= 35 ? 'bg-amber-500' : 'bg-red-500'
+                              }`} style={{ width: `${Math.min(res.score, 100)}%` }} />
+                            </div>
+                            <span className="text-slate-300 font-mono text-sm">{res.score}%</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
+                            res.decision === 'Hire'
                               ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : res.decision === 'Borderline'
+                              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                               : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                            }`}>
-                            {res.decision === 'Hire' ? <CheckCircle className="w-3 h-3 mr-1" /> : <XCircle className="w-3 h-3 mr-1" />}
+                          }`}>
+                            {res.decision === 'Hire' ? <CheckCircle className="w-3 h-3 mr-1" />
+                              : res.decision === 'Borderline' ? <AlertTriangle className="w-3 h-3 mr-1" />
+                              : <XCircle className="w-3 h-3 mr-1" />}
                             {res.decision}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-sm text-slate-400 leading-relaxed">{res.reason}</td>
+                        <td className="px-6 py-4 text-sm text-slate-400 leading-relaxed whitespace-pre-line">{res.reason}</td>
                         <td className="px-6 py-4 text-xs text-slate-500 italic truncate max-w-[200px]" title={res.response_snippet}>
                           "{res.response_snippet}"
                         </td>
                       </tr>
+                      {/* Expandable Per-Rubric-Point Breakdown */}
+                      {expandedId === res.id && res.point_scores && (
+                        <tr key={`${res.id}-details`}>
+                          <td colSpan={5} className="px-6 py-4 bg-slate-800/40">
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-4 text-xs text-slate-500 mb-2">
+                                <span>Coverage: <span className="text-slate-300 font-semibold">{res.coverage}%</span></span>
+                                <span>Keyword Match: <span className="text-slate-300 font-semibold">{res.keyword_match_rate}%</span></span>
+                              </div>
+                              <h4 className="text-sm font-semibold text-slate-300">Per-Rubric Breakdown</h4>
+                              {res.point_scores.map((pt, idx) => (
+                                <div key={idx} className={`rounded-lg p-3 border ${
+                                  pt.passed ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5'
+                                }`}>
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div className="flex-1">
+                                      <p className="text-sm text-slate-300">{pt.rubric_point}</p>
+                                      {pt.matched_keywords.length > 0 && (
+                                        <div className="flex flex-wrap gap-1 mt-1.5">
+                                          {pt.matched_keywords.map((kw, ki) => (
+                                            <span key={ki} className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 text-xs rounded border border-blue-500/20">{kw}</span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                      <div className="w-20 h-2 bg-slate-700 rounded-full overflow-hidden">
+                                        <div className={`h-full rounded-full ${pt.passed ? 'bg-emerald-500' : 'bg-red-500'}`}
+                                          style={{ width: `${Math.min(pt.score * 100, 100)}%` }} />
+                                      </div>
+                                      <span className={`text-xs font-mono font-semibold ${pt.passed ? 'text-emerald-400' : 'text-red-400'}`}>
+                                        {(pt.score * 100).toFixed(0)}%
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </>
                     ))}
                   </tbody>
                 </table>

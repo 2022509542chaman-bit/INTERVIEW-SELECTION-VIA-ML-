@@ -29,6 +29,7 @@ print(f"Processing took: {end_time - start_time:.4f} seconds")
 
 # Verify Alice passed, Bob/Charlie failed, and David is Borderline
 for r in results[:4]:
-    print(f"Name: {r['name']} | Score: {r['score']} | Decision: {r['decision']}")
+    print(f"Name: {r['name']} | Score: {r['score']}% | Decision: {r['decision']}")
+    print(f"Coverage: {r.get('coverage', 'N/A')}% | Keywords: {r.get('keyword_match_rate', 'N/A')}%")
     print(f"Reason: {r['reason']}")
     print("-" * 20)
