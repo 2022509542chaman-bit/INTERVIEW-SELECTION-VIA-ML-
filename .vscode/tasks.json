@@ -20,6 +20,11 @@
 			"label": "Test Speed",
 			"type": "shell",
 			"command": "curl -s -o /dev/null -w 'Frontend: %{http_code}\\n' http://localhost:5173/ && curl -s -o /dev/null -w 'Backend: %{http_code}\\n' http://localhost:8000/docs && echo 'Proxy test:' && curl -s --max-time 120 -X POST http://localhost:5173/evaluate -F 'candidates_file=@/Users/chamanpreetsingh/Documents/ml-evaluator/ml-evaluator/candidates.csv' -F 'rubric_file=@/Users/chamanpreetsingh/Documents/ml-evaluator/ml-evaluator/rubric.txt' | head -c 300"
+		},
+		{
+			"label": "Git Push Speed Opt",
+			"type": "shell",
+			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git commit -m 'Speed optimization: MiniLM model + precompiled keywords + smart cross-encoder skip' && git push origin main"
 		}
 	]
 }
