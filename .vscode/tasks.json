@@ -80,6 +80,11 @@
 			"label": "Git Push Production",
 			"type": "shell",
 			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git commit -m 'Production-ready: configurable API URL + flexible static serving for Railway' && git push origin main"
+		},
+		{
+			"label": "Git Push Serve",
+			"type": "shell",
+			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git commit -m 'Add serve dependency for Railway frontend hosting' && git push origin main"
 		}
 	]
 }
