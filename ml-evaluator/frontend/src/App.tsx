@@ -9,16 +9,34 @@ interface PointScore {
   passed: boolean;
 }
 
+interface BorderlineAnalysis {
+  proximity_to_hire: number;
+  gap_percentage: number;
+  interview_questions: string[];
+  improvement_areas: string[];
+  verdict: string;
+}
+
 interface EvaluationResult {
   id: string;
   name: string;
   score: number;
+  rank: number;
   decision: 'Hire' | 'Borderline' | 'Reject';
   reason: string;
+  strengths: string[];
+  weaknesses: string[];
+  gaps: string[];
+  matched_keywords: string[];
+  missing_keywords: string[];
+  recommendation: string;
   response_snippet: string;
   point_scores?: PointScore[];
   coverage?: number;
   keyword_match_rate?: number;
+  star_rating?: number;
+  grade?: string;
+  borderline_analysis?: BorderlineAnalysis;
 }
 
 interface Summary {
@@ -308,53 +326,121 @@ function App() {
                 <h3 className="text-lg font-bold text-white">Candidate Breakdown</h3>
                 <button
                   onClick={() => {
-                    const csvContent = "data:text/csv;charset=utf-8,"
-                      + "Name,Decision,Score,Reason\n"
-                      + results.map(e => `${e.name},${e.decision},${e.score},"${e.reason.replace(/"/g, '""')}"`).join("\n");
-                    const encodedUri = encodeURI(csvContent);
-                    const link = document.createElement("a");
-                    link.setAttribute("href", encodedUri);
-                    link.setAttribute("download", "evaluations.csv");
+                    const sorted = [...results].sort((a, b) => a.rank - b.rank);
+                    const esc = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
+                    const starStr = (n: number) => '★'.repeat(n || 0) + '☆'.repeat(5 - (n || 0));
+                    const rubricPts = sorted[0]?.point_scores?.map(p => p.rubric_point.slice(0, 50)) || [];
+                    const lines: string[] = [];
+
+                    // Report header
+                    lines.push(esc('CANDIDATE EVALUATION REPORT'));
+                    lines.push(esc(`Generated: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}` ));
+                    lines.push(esc(`Summary → Total: ${summary.total} | Hired: ${summary.hired} | Borderline: ${summary.borderline} | Rejected: ${summary.rejected}`));
+                    lines.push('');
+
+                    const headers = [
+                      'Rank', 'Candidate', 'Grade', 'Rating', 'Decision',
+                      'Score (%)', 'Coverage (%)', 'Keyword Match (%)',
+                      'Top Strengths', 'Areas of Concern',
+                      'Skills Detected', 'Skills Missing',
+                      'Full Assessment', 'Recommendation',
+                      ...rubricPts.map(rp => `[Rubric] ${rp}`)
+                    ];
+                    lines.push(headers.map(h => esc(h)).join(','));
+
+                    sorted.forEach(r => {
+                      const dec = r.decision === 'Hire' ? '✅ HIRE'
+                        : r.decision === 'Borderline' ? '⚠️ BORDERLINE'
+                        : '❌ REJECT';
+                      const rubricScores = r.point_scores?.map(p =>
+                        `${(p.score * 100).toFixed(0)}% ${p.passed ? '✓ Pass' : '✗ Fail'}`
+                      ) || [];
+                      const row = [
+                        `#${r.rank}`,
+                        esc(r.name),
+                        r.grade || 'N/A',
+                        esc(starStr(r.star_rating)),
+                        esc(dec),
+                        r.score.toFixed(1),
+                        (r.coverage || 0).toFixed(1),
+                        (r.keyword_match_rate || 0).toFixed(1),
+                        esc(r.strengths?.join(' | ') || 'None identified'),
+                        esc([...(r.weaknesses || []), ...(r.gaps || [])].join(' | ') || 'None'),
+                        esc(r.matched_keywords?.join(', ') || 'None'),
+                        esc(r.missing_keywords?.join(', ') || 'None'),
+                        esc(r.reason?.replace(/\n/g, ' ║ ') || ''),
+                        esc(r.recommendation || ''),
+                        ...rubricScores.map(s => esc(s))
+                      ];
+                      lines.push(row.join(','));
+                    });
+
+                    lines.push('');
+                    lines.push(esc('Powered by ML Candidate Evaluator AI'));
+                    const bom = '\uFEFF';
+                    const csv = bom + lines.join('\n');
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `evaluation_report_${new Date().toISOString().slice(0,10)}.csv`;
                     document.body.appendChild(link);
                     link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(url);
                   }}
-                  className="text-blue-400 font-medium text-sm hover:text-blue-300 transition-colors"
+                  className="text-blue-400 font-medium text-sm hover:text-blue-300 transition-colors flex items-center gap-1"
                 >
-                  Export CSV ↓
+                  📊 Export Full Report ↓
                 </button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-800/50 text-slate-400 text-sm border-b border-slate-800">
-                      <th className="px-6 py-4 font-semibold w-1/5">Candidate</th>
-                      <th className="px-6 py-4 font-semibold w-1/12">Score</th>
-                      <th className="px-6 py-4 font-semibold w-1/12">Decision</th>
-                      <th className="px-6 py-4 font-semibold w-2/5">Evaluation Reason</th>
-                      <th className="px-6 py-4 font-semibold w-1/5">Response Snippet</th>
+                      <th className="px-4 py-4 font-semibold w-10">#</th>
+                      <th className="px-4 py-4 font-semibold w-1/6">Candidate</th>
+                      <th className="px-4 py-4 font-semibold w-1/12">Score</th>
+                      <th className="px-4 py-4 font-semibold w-1/12">Decision</th>
+                      <th className="px-4 py-4 font-semibold w-2/5">Evaluation Summary</th>
+                      <th className="px-4 py-4 font-semibold w-1/6">Matched Skills</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/50">
-                    {results.map((res) => (
+                    {[...results].sort((a, b) => a.rank - b.rank).map((res) => (
                       <>
                       <tr key={res.id} className="hover:bg-slate-800/30 transition-colors cursor-pointer" onClick={() => setExpandedId(expandedId === res.id ? null : res.id)}>
-                        <td className="px-6 py-4 font-medium text-white">
+                        <td className="px-4 py-4">
+                          <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${
+                            res.rank === 1 ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                            res.rank === 2 ? 'bg-slate-500/20 text-slate-300 border border-slate-500/30' :
+                            'bg-slate-800 text-slate-500 border border-slate-700'
+                          }`}>
+                            {res.rank}
+                          </span>
+                        </td>
+                        <td className="px-4 py-4 font-medium text-white">
                           <div className="flex items-center gap-2">
                             <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${expandedId === res.id ? 'rotate-180' : ''}`} />
-                            {res.name}
+                            <div>
+                              <div>{res.name}</div>
+                              <div className="text-xs text-slate-500 font-normal">
+                                {res.grade || ''} <span className="text-amber-400/70">{'★'.repeat(res.star_rating || 0)}</span><span className="text-slate-600">{'☆'.repeat(5 - (res.star_rating || 0))}</span>
+                              </div>
+                            </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-4 py-4">
                           <div className="flex items-center gap-2">
                             <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
                               <div className={`h-full rounded-full ${
-                                res.score >= 55 ? 'bg-emerald-500' : res.score >= 35 ? 'bg-amber-500' : 'bg-red-500'
+                                res.decision === 'Hire' ? 'bg-emerald-500' : res.decision === 'Borderline' ? 'bg-amber-500' : 'bg-red-500'
                               }`} style={{ width: `${Math.min(res.score, 100)}%` }} />
                             </div>
                             <span className="text-slate-300 font-mono text-sm">{res.score}%</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-4 py-4">
                           <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
                             res.decision === 'Hire'
                               ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
@@ -368,20 +454,115 @@ function App() {
                             {res.decision}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-sm text-slate-400 leading-relaxed whitespace-pre-line">{res.reason}</td>
-                        <td className="px-6 py-4 text-xs text-slate-500 italic truncate max-w-[200px]" title={res.response_snippet}>
-                          "{res.response_snippet}"
+                        <td className="px-4 py-4 text-sm text-slate-400 leading-relaxed whitespace-pre-line max-w-xs">{res.reason}</td>
+                        <td className="px-4 py-4">
+                          <div className="flex flex-wrap gap-1 max-w-[180px]">
+                            {(res.matched_keywords || []).slice(0, 5).map((kw, ki) => (
+                              <span key={ki} className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 text-xs rounded border border-blue-500/20">{kw}</span>
+                            ))}
+                            {(res.matched_keywords || []).length > 5 && (
+                              <span className="text-xs text-slate-500">+{(res.matched_keywords || []).length - 5}</span>
+                            )}
+                            {(res.matched_keywords || []).length === 0 && (
+                              <span className="text-xs text-slate-600 italic">None</span>
+                            )}
+                          </div>
                         </td>
                       </tr>
-                      {/* Expandable Per-Rubric-Point Breakdown */}
+                      {/* Expandable Detail Panel */}
                       {expandedId === res.id && res.point_scores && (
                         <tr key={`${res.id}-details`}>
-                          <td colSpan={5} className="px-6 py-4 bg-slate-800/40">
-                            <div className="space-y-3">
-                              <div className="flex items-center gap-4 text-xs text-slate-500 mb-2">
+                          <td colSpan={6} className="px-6 py-5 bg-slate-800/40">
+                            <div className="space-y-4">
+                              {/* Stats row */}
+                              <div className="flex flex-wrap items-center gap-6 text-xs text-slate-500">
                                 <span>Coverage: <span className="text-slate-300 font-semibold">{res.coverage}%</span></span>
                                 <span>Keyword Match: <span className="text-slate-300 font-semibold">{res.keyword_match_rate}%</span></span>
+                                <span>Rank: <span className="text-slate-300 font-semibold">#{res.rank}</span></span>
                               </div>
+
+                              {/* Recommendation banner */}
+                              {res.recommendation && (
+                                <div className={`rounded-lg px-4 py-3 text-sm font-medium ${
+                                  res.decision === 'Hire'
+                                    ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+                                    : res.decision === 'Borderline'
+                                    ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                                    : 'bg-red-500/10 text-red-300 border border-red-500/20'
+                                }`}>
+                                  {res.decision === 'Hire' ? '🎯' : res.decision === 'Borderline' ? '💡' : '📋'} {res.recommendation}
+                                </div>
+                              )}
+
+                              {/* Borderline Decision Tool */}
+                              {res.decision === 'Borderline' && res.borderline_analysis && (
+                                <div className="bg-gradient-to-br from-amber-500/5 to-orange-500/5 border border-amber-500/20 rounded-xl p-5 space-y-4">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="text-sm font-bold text-amber-400 flex items-center gap-2">
+                                      <AlertTriangle className="w-4 h-4" />
+                                      Borderline Decision Tool
+                                    </h4>
+                                    <span className="text-xs px-2.5 py-1 bg-amber-500/10 text-amber-300 rounded-full border border-amber-500/20 font-semibold">
+                                      {res.borderline_analysis.proximity_to_hire}% toward Hire
+                                    </span>
+                                  </div>
+
+                                  {/* Proximity gauge */}
+                                  <div>
+                                    <div className="flex justify-between text-xs text-slate-500 mb-1">
+                                      <span>Reject</span>
+                                      <span className="text-amber-400/60">Current Position</span>
+                                      <span>Hire Threshold</span>
+                                    </div>
+                                    <div className="w-full h-3 bg-slate-700 rounded-full overflow-hidden">
+                                      <div className="h-full rounded-full bg-gradient-to-r from-red-500 via-amber-500 to-emerald-500 transition-all duration-700"
+                                        style={{ width: `${Math.min(res.borderline_analysis.proximity_to_hire, 100)}%` }} />
+                                    </div>
+                                    <p className="text-xs text-amber-200/50 mt-1.5">{res.borderline_analysis.verdict}</p>
+                                  </div>
+
+                                  {/* Interview questions */}
+                                  {res.borderline_analysis.interview_questions.length > 0 && (
+                                    <div>
+                                      <h5 className="text-xs font-semibold text-amber-300 mb-2">📝 Suggested Interview Questions</h5>
+                                      <ol className="space-y-1.5">
+                                        {res.borderline_analysis.interview_questions.map((q: string, qi: number) => (
+                                          <li key={qi} className="text-xs text-amber-200/70 flex items-start gap-2">
+                                            <span className="text-amber-500 font-bold flex-shrink-0">{qi + 1}.</span>
+                                            {q}
+                                          </li>
+                                        ))}
+                                      </ol>
+                                    </div>
+                                  )}
+
+                                  {/* Improvement areas */}
+                                  {res.borderline_analysis.improvement_areas.length > 0 && (
+                                    <div>
+                                      <h5 className="text-xs font-semibold text-amber-300 mb-2">🔧 Areas to Probe</h5>
+                                      <ul className="space-y-1">
+                                        {res.borderline_analysis.improvement_areas.map((area: string, ai: number) => (
+                                          <li key={ai} className="text-xs text-amber-200/60 flex items-start gap-2">
+                                            <span className="text-amber-500 mt-0.5">›</span>
+                                            {area}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+
+                                  {/* Missing skills */}
+                                  {(res.missing_keywords?.length || 0) > 0 && (
+                                    <div className="pt-3 border-t border-amber-500/10">
+                                      <p className="text-xs text-amber-200/40">
+                                        🔍 Key skills to verify: <span className="text-amber-300/60">{res.missing_keywords?.slice(0, 6).join(', ')}</span>
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Per-Rubric Breakdown */}
                               <h4 className="text-sm font-semibold text-slate-300">Per-Rubric Breakdown</h4>
                               {res.point_scores.map((pt, idx) => (
                                 <div key={idx} className={`rounded-lg p-3 border ${
@@ -410,6 +591,11 @@ function App() {
                                   </div>
                                 </div>
                               ))}
+
+                              {/* Response snippet */}
+                              <div className="pt-2 border-t border-slate-700">
+                                <p className="text-xs text-slate-500 italic">"{res.response_snippet}"</p>
+                              </div>
                             </div>
                           </td>
                         </tr>

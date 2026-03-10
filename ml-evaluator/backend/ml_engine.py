@@ -313,9 +313,9 @@ def evaluate_with_strict_model(
         print(f"⏩ Cross-encoder skipped ({reason}: {total_pairs} pairs > {CROSS_ENCODER_PAIR_LIMIT}) — bi-encoder only")
 
     # ── 5. Adaptive thresholds (tuned by strictness 0–1) ────────────────
-    POINT_PASS    = 0.25 + strictness_threshold * 0.20   # 0.25 – 0.45
-    HIRE_THRESH   = 0.42 + strictness_threshold * 0.18   # 0.42 – 0.60
-    BORDER_THRESH = 0.28 + strictness_threshold * 0.14   # 0.28 – 0.42
+    POINT_PASS    = 0.10 + strictness_threshold * 0.15   # 0.10 – 0.25
+    HIRE_THRESH   = 0.30 + strictness_threshold * 0.12   # 0.30 – 0.42
+    BORDER_THRESH = 0.18 + strictness_threshold * 0.08   # 0.18 – 0.26
 
     print(f"Thresholds  (strictness={strictness_threshold:.2f}):")
     print(f"  POINT_PASS={POINT_PASS:.2f}  HIRE={HIRE_THRESH:.2f}  "
@@ -366,16 +366,17 @@ def evaluate_with_strict_model(
         global_kw = (len(all_rubric_kw & cand_kw) / len(all_rubric_kw)) if all_rubric_kw else 0.0
         depth     = min(1.0, len(responses[i].split()) / 20.0)
 
+        # Favour candidates who excel in some areas (strength-weighted)
         final = (
-            0.35 * w_mean +
-            0.25 * coverage +
-            0.20 * strength +
-            0.10 * global_kw +
-            0.10 * depth
+            0.25 * w_mean +
+            0.15 * coverage +
+            0.30 * strength +
+            0.15 * global_kw +
+            0.15 * depth
         )
         final = min(final, 0.99)
 
-        # Decision
+        # Preliminary decision (refined by relative ranking below)
         if final >= HIRE_THRESH:
             decision = "Hire"
         elif final >= BORDER_THRESH:
@@ -383,70 +384,233 @@ def evaluate_with_strict_model(
         else:
             decision = "Reject"
 
-        # --- Build reasoning ---
+        # --- Detailed analysis fields ---
         matched_kw_all = sorted(all_rubric_kw & cand_kw)
+        missing_kw_all = sorted(all_rubric_kw - cand_kw)
         sorted_pts = sorted(point_details, key=lambda x: x['score'], reverse=True)
+        passed_pts = [p for p in point_details if p['passed']]
+        failed_pts = [p for p in point_details if not p['passed']]
 
-        reason_lines = []
-        if decision == "Hire":
-            reason_lines.append(
-                f"✅ Strong candidate — {coverage*100:.0f}% rubric coverage, "
-                f"{final*100:.1f}% overall alignment."
-            )
-        elif decision == "Borderline":
-            reason_lines.append(
-                f"⚠️ Borderline — {coverage*100:.0f}% rubric coverage, "
-                f"{final*100:.1f}% alignment. Some gaps present."
-            )
-        else:
-            reason_lines.append(
-                f"❌ Below threshold — {coverage*100:.0f}% coverage, "
-                f"{final*100:.1f}% alignment."
-            )
-
-        if matched_kw_all:
-            reason_lines.append(f"Matched terms: {', '.join(matched_kw_all[:10])}.")
-        else:
-            reason_lines.append("No key technical terms matched.")
-
-        if sorted_pts:
-            best = sorted_pts[0]
-            reason_lines.append(
-                f"Strongest area: \"{best['rubric_point'][:70]}\" "
-                f"({best['score']*100:.0f}%)."
-            )
-        if len(sorted_pts) > 1:
-            worst = sorted_pts[-1]
-            if not worst['passed']:
-                reason_lines.append(
-                    f"Weakest area: \"{worst['rubric_point'][:70]}\" "
-                    f"({worst['score']*100:.0f}%)."
-                )
+        strengths = [
+            f"{p['rubric_point'][:80]} ({p['score']*100:.0f}%)"
+            for p in sorted_pts if p['passed']
+        ]
+        weaknesses = [
+            f"{p['rubric_point'][:80]} ({p['score']*100:.0f}%)"
+            for p in sorted(failed_pts, key=lambda x: x['score'])
+        ]
+        gaps = []
+        for fp in failed_pts:
+            j_idx = point_details.index(fp)
+            miss = sorted(criteria[j_idx]['keywords'] - cand_kw)
+            if miss:
+                gaps.append(f"{fp['rubric_point'][:50]}: needs {', '.join(miss[:5])}")
 
         results.append({
             "id": str(i + 1),
             "name": names[i],
             "score": round(final * 100, 2),
+            "rank": 0,
             "decision": decision,
-            "reason": "\n".join(reason_lines),
+            "reason": "",
+            "strengths": strengths,
+            "weaknesses": weaknesses,
+            "gaps": gaps,
+            "matched_keywords": matched_kw_all,
+            "missing_keywords": missing_kw_all,
+            "recommendation": "",
             "response_snippet": (responses[i][:150] + "…")
                 if len(responses[i]) > 150 else responses[i],
             "point_scores": point_details,
             "coverage": round(coverage * 100, 1),
             "keyword_match_rate": round(global_kw * 100, 1),
+            "_raw": final,
+            "_w_mean": w_mean, "_coverage": coverage,
+            "_strength": strength, "_kwCov": global_kw, "_depth": depth,
         })
 
-        # Debug log
+    # ── 8. Relative ranking — guarantee top 1–2 get hired ─────────────
+    results.sort(key=lambda r: r['_raw'], reverse=True)
+    top_score = results[0]['_raw'] if results else 0
+    MIN_QUALIFY = 0.08  # low bar — let relative ranking do the work
+
+    for idx, r in enumerate(results):
+        r['rank'] = idx + 1
+        ratio = r['_raw'] / top_score if top_score > 0 else 0
+
+        # Top candidate: always Hire if minimally qualified
+        if idx == 0 and r['_raw'] >= MIN_QUALIFY:
+            r['decision'] = 'Hire'
+        # Runner-up: Hire if within 75% of top scorer
+        elif idx == 1 and ratio >= 0.75 and r['_raw'] >= MIN_QUALIFY:
+            r['decision'] = 'Hire'
+        # Top 3: at least Borderline if within 55% of top
+        elif idx <= 2 and ratio >= 0.55 and r['_raw'] >= MIN_QUALIFY * 0.8:
+            if r['decision'] == 'Reject':
+                r['decision'] = 'Borderline'
+        # Others: Borderline if within 45% of top
+        elif ratio >= 0.45 and r['_raw'] >= MIN_QUALIFY:
+            if r['decision'] == 'Reject':
+                r['decision'] = 'Borderline'
+
+    # ── 9. Star ratings & letter grades ──────────────────────────────────
+    for r in results:
+        s = r['score']
+        if s >= 55:   r['star_rating'] = 5
+        elif s >= 40: r['star_rating'] = 4
+        elif s >= 28: r['star_rating'] = 3
+        elif s >= 16: r['star_rating'] = 2
+        else:         r['star_rating'] = 1
+
+        if s >= 60:   r['grade'] = 'A+'
+        elif s >= 50: r['grade'] = 'A'
+        elif s >= 40: r['grade'] = 'B+'
+        elif s >= 32: r['grade'] = 'B'
+        elif s >= 24: r['grade'] = 'C+'
+        elif s >= 16: r['grade'] = 'C'
+        elif s >= 10: r['grade'] = 'D'
+        else:         r['grade'] = 'F'
+
+    # ── 10. Borderline analysis tool ─────────────────────────────────────
+    hire_thresh_pct = HIRE_THRESH * 100
+    for r in results:
+        if r['decision'] == 'Borderline':
+            proximity = min(99, round(r['score'] / hire_thresh_pct * 100, 1))
+            gap_pct = round(max(0, hire_thresh_pct - r['score']), 1)
+
+            interview_qs = []
+            weak_pts = sorted(
+                [p for p in r['point_scores'] if not p['passed']],
+                key=lambda p: p['score']
+            )
+            for wp in weak_pts[:3]:
+                topic = wp['rubric_point'][:60].rstrip('.')
+                interview_qs.append(
+                    f"Describe your hands-on experience with: {topic}"
+                )
+            if r['missing_keywords']:
+                top_miss = r['missing_keywords'][:4]
+                interview_qs.append(
+                    f"Walk us through a project involving: {', '.join(top_miss)}"
+                )
+
+            improvements = []
+            for wp in weak_pts[:3]:
+                improvements.append(
+                    f"Demonstrate depth in: {wp['rubric_point'][:55].rstrip('.')}"
+                )
+
+            closeness = "Very close" if proximity >= 85 else \
+                        "Moderately close" if proximity >= 65 else "Needs improvement"
+            r['borderline_analysis'] = {
+                'proximity_to_hire': proximity,
+                'gap_percentage': gap_pct,
+                'interview_questions': interview_qs,
+                'improvement_areas': improvements,
+                'verdict': f"{closeness} — {gap_pct:.1f}% gap to hire threshold",
+            }
+        else:
+            r['borderline_analysis'] = None
+
+    # ── 11. Build catchy reasons & recommendations ────────────────────────
+    for r in results:
+        cov = r['coverage']
+        score = r['score']
+        dec = r['decision']
+        stars_txt = '⭐' * r['star_rating'] + '☆' * (5 - r['star_rating'])
+        lines = []
+
+        if dec == 'Hire':
+            lines.append(
+                f"🏆 TOP PICK — Rank #{r['rank']} | {r['grade']} | {stars_txt}"
+            )
+            lines.append(
+                f"✅ Strong match with {cov:.0f}% rubric coverage "
+                f"and {score:.1f}% overall alignment."
+            )
+            if r['strengths']:
+                lines.append(f"💪 Excels in: {'; '.join(r['strengths'][:3])}")
+        elif dec == 'Borderline':
+            ba = r['borderline_analysis']
+            lines.append(
+                f"⚠️ BORDERLINE — Rank #{r['rank']} | {r['grade']} | {stars_txt}"
+            )
+            lines.append(
+                f"📊 {cov:.0f}% coverage, {score:.1f}% fit — "
+                f"{ba['proximity_to_hire']:.0f}% toward hire threshold."
+            )
+            if r['strengths']:
+                lines.append(f"💪 Shows promise in: {'; '.join(r['strengths'][:2])}")
+            lines.append(
+                f"🔧 Gap to close: {ba['gap_percentage']:.1f}% — "
+                f"could be bridged with a focused interview."
+            )
+        else:
+            lines.append(
+                f"❌ NOT RECOMMENDED — Rank #{r['rank']} | {r['grade']} | {stars_txt}"
+            )
+            lines.append(
+                f"📊 Only {cov:.0f}% coverage and {score:.1f}% overall fit."
+            )
+
+        if r['matched_keywords']:
+            lines.append(
+                f"🔑 Skills detected: {', '.join(r['matched_keywords'][:10])}"
+            )
+        if r['missing_keywords'] and dec != 'Hire':
+            lines.append(
+                f"🔍 Missing: {', '.join(r['missing_keywords'][:6])}"
+            )
+
+        # Recommendation
+        if dec == 'Hire':
+            best_area = r['strengths'][0].split('(')[0].strip() \
+                if r['strengths'] else 'general competency'
+            r['recommendation'] = (
+                f"🎯 Proceed to interview — Top {r['rank']} candidate. "
+                f"Covers {cov:.0f}% of requirements with "
+                f"{len(r['matched_keywords'])} matching skills. "
+                f"Strongest in: {best_area}."
+            )
+        elif dec == 'Borderline':
+            gap_areas = [w.split('(')[0].strip() for w in r['weaknesses'][:2]]
+            r['recommendation'] = (
+                f"💡 Worth a screening call — "
+                f"{r['borderline_analysis']['proximity_to_hire']:.0f}% "
+                f"toward hire threshold. "
+                f"Probe: {'; '.join(gap_areas) if gap_areas else 'technical depth'}. "
+                f"Potential to grow into role."
+            )
+        else:
+            total_kw = len(r['matched_keywords']) + len(r['missing_keywords'])
+            r['recommendation'] = (
+                f"📋 Does not meet requirements — missing "
+                f"{len(r['missing_keywords'])} of {total_kw} expected skills. "
+                f"Consider for other roles or future openings."
+            )
+
+        r['reason'] = "\n".join(lines)
+
+    # ── Debug log ─────────────────────────────────────────────────────────
+    for r in results:
         print(f"\n{'─' * 55}")
-        print(f"  Candidate {i+1}: {names[i]}")
-        print(f"  wMean={w_mean:.3f}  coverage={coverage:.2f}  "
-              f"strength={strength:.3f}  kwCov={global_kw:.2f}  depth={depth:.2f}")
-        print(f"  ★ FINAL={final:.4f}  →  {decision}")
-        for pd_ in point_details:
+        print(f"  #{r['rank']} {r['name']}  →  {r['decision']} "
+              f"({r['grade']}, {'⭐'*r['star_rating']})")
+        print(f"  wMean={r['_w_mean']:.3f}  cov={r['_coverage']:.2f}  "
+              f"str={r['_strength']:.3f}  kwCov={r['_kwCov']:.2f}  "
+              f"depth={r['_depth']:.2f}")
+        print(f"  ★ FINAL={r['_raw']:.4f}  SCORE={r['score']}%")
+        for pd_ in r['point_scores']:
             tag = "✓" if pd_['passed'] else "✗"
             print(f"    {tag} [{pd_['score']:.3f}] bi={pd_['bi_score']:.2f} "
                   f"cx={pd_['cross_score']:.2f} kw={pd_['keyword_overlap']:.2f}  "
                   f"{pd_['rubric_point'][:55]}")
+
+    # Clean internal keys
+    for r in results:
+        for k in ('_raw', '_w_mean', '_coverage', '_strength',
+                  '_kwCov', '_depth'):
+            r.pop(k, None)
 
     total_time = time.time() - t0
     print(f"\n🏁 Total evaluation: {total_time:.2f}s for {n_cand} candidates")
