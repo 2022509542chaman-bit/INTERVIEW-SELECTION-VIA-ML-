@@ -85,6 +85,11 @@
 			"label": "Git Push Serve",
 			"type": "shell",
 			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git commit -m 'Add serve dependency for Railway frontend hosting' && git push origin main"
+		},
+		{
+			"label": "Git Push Railway Fix",
+			"type": "shell",
+			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git commit -m 'Add nixpacks.toml + runtime.txt for Railway Python detection' && git push origin main"
 		}
 	]
 }
