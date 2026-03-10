@@ -37,6 +37,17 @@ interface EvaluationResult {
   star_rating?: number;
   grade?: string;
   borderline_analysis?: BorderlineAnalysis;
+  consistency_score?: number;
+  experience_level?: string;
+  experience_confidence?: number;
+  must_have_pass_rate?: number;
+  response_depth?: number;
+  criteria_passed?: number;
+  criteria_total?: number;
+  technical_breadth?: number;
+  technical_depth_score?: number;
+  percentile?: number;
+  confidence?: number;
 }
 
 interface Summary {
@@ -58,6 +69,7 @@ function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [evalTime, setEvalTime] = useState<number | null>(null);
 
   // Show enter button after a delay
   useEffect(() => {
@@ -100,6 +112,7 @@ function App() {
 
       setResults(data.data);
       setSummary(data.summary);
+      setEvalTime(data.eval_time_seconds ?? null);
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message);
@@ -321,6 +334,15 @@ function App() {
               </div>
             </div>
 
+            {/* Eval Time Badge */}
+            {evalTime !== null && (
+              <div className="flex justify-center">
+                <span className="inline-flex items-center gap-2 px-4 py-1.5 bg-slate-800/60 rounded-full text-xs text-slate-400 border border-slate-700">
+                  ⚡ Evaluated in <span className="text-blue-400 font-semibold">{evalTime.toFixed(1)}s</span>
+                </span>
+              </div>
+            )}
+
             {/* Detailed Table */}
             <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 overflow-hidden">
               <div className="px-6 py-5 border-b border-slate-800 flex justify-between items-center">
@@ -341,7 +363,11 @@ function App() {
 
                     const headers = [
                       'Rank', 'Candidate', 'Grade', 'Rating', 'Decision',
-                      'Score (%)', 'Coverage (%)', 'Keyword Match (%)',
+                      'Score (%)', 'Percentile', 'Confidence (%)',
+                      'Coverage (%)', 'Keyword Match (%)', 'Consistency (%)',
+                      'Must-Have Pass (%)', 'Criteria Passed', 'Criteria Total',
+                      'Tech Breadth', 'Tech Depth (%)', 'Response Depth (%)',
+                      'Experience Level', 'Experience Confidence',
                       'Top Strengths', 'Areas of Concern',
                       'Skills Detected', 'Skills Missing',
                       'Full Assessment', 'Recommendation',
@@ -363,8 +389,19 @@ function App() {
                         esc(starStr(r.star_rating)),
                         esc(dec),
                         r.score.toFixed(1),
+                        (r.percentile ?? 0).toFixed(1),
+                        (r.confidence ?? 0).toFixed(1),
                         (r.coverage || 0).toFixed(1),
                         (r.keyword_match_rate || 0).toFixed(1),
+                        (r.consistency_score ?? 0).toFixed(1),
+                        (r.must_have_pass_rate ?? 0).toFixed(1),
+                        String(r.criteria_passed ?? 0),
+                        String(r.criteria_total ?? 0),
+                        String(r.technical_breadth ?? 0),
+                        (r.technical_depth_score ?? 0).toFixed(1),
+                        (r.response_depth ?? 0).toFixed(1),
+                        r.experience_level ?? 'Unknown',
+                        String(r.experience_confidence ?? 0),
                         esc(r.strengths?.join(' | ') || 'None identified'),
                         esc([...(r.weaknesses || []), ...(r.gaps || [])].join(' | ') || 'None'),
                         esc(r.matched_keywords?.join(', ') || 'None'),
@@ -476,10 +513,24 @@ function App() {
                           <td colSpan={6} className="px-6 py-5 bg-slate-800/40">
                             <div className="space-y-4">
                               {/* Stats row */}
-                              <div className="flex flex-wrap items-center gap-6 text-xs text-slate-500">
-                                <span>Coverage: <span className="text-slate-300 font-semibold">{res.coverage}%</span></span>
-                                <span>Keyword Match: <span className="text-slate-300 font-semibold">{res.keyword_match_rate}%</span></span>
-                                <span>Rank: <span className="text-slate-300 font-semibold">#{res.rank}</span></span>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                                {[
+                                  { label: 'Coverage', value: `${res.coverage ?? 0}%`, color: 'text-blue-400' },
+                                  { label: 'Keyword Match', value: `${res.keyword_match_rate ?? 0}%`, color: 'text-indigo-400' },
+                                  { label: 'Consistency', value: `${res.consistency_score ?? 0}%`, color: 'text-cyan-400' },
+                                  { label: 'Confidence', value: `${res.confidence ?? 0}%`, color: 'text-emerald-400' },
+                                  { label: 'Percentile', value: `${res.percentile ?? 0}%`, color: 'text-purple-400' },
+                                  { label: 'Must-Have Pass', value: `${res.must_have_pass_rate ?? 0}%`, color: 'text-amber-400' },
+                                  { label: 'Criteria Passed', value: `${res.criteria_passed ?? 0}/${res.criteria_total ?? 0}`, color: 'text-slate-300' },
+                                  { label: 'Tech Breadth', value: `${res.technical_breadth ?? 0} skills`, color: 'text-teal-400' },
+                                  { label: 'Tech Depth', value: `${res.technical_depth_score ?? 0}%`, color: 'text-sky-400' },
+                                  { label: 'Experience', value: `${res.experience_level ?? '?'} (${((res.experience_confidence ?? 0) * 100).toFixed(0)}%)`, color: 'text-orange-400' },
+                                ].map((stat, si) => (
+                                  <div key={si} className="bg-slate-800/50 rounded-lg px-3 py-2 text-center">
+                                    <div className="text-[10px] text-slate-500 uppercase tracking-wider">{stat.label}</div>
+                                    <div className={`text-sm font-semibold ${stat.color}`}>{stat.value}</div>
+                                  </div>
+                                ))}
                               </div>
 
                               {/* Recommendation banner */}

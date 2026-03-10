@@ -25,3 +25,4 @@ Thumbs.db
 # Large Model files (Optional - common for ML projects to keep them if small, but let's ignore local logs)
 *.log
 ml-evaluator/backend/server.log
+.vite/

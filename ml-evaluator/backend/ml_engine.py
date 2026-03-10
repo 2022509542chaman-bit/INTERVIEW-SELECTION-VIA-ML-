@@ -3,111 +3,98 @@ import numpy as np
 import io
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from sentence_transformers import SentenceTransformer, CrossEncoder, util
 
-# ─── Model Configuration ──────────────────────────────────────────────────────
-# Fast + accurate bi-encoder (80MB, 6× faster than mpnet on CPU)
+# --- Model Configuration ---
 BI_ENCODER_MODEL = 'all-MiniLM-L6-v2'
-# Lightweight cross-encoder for precise re-ranking
 CROSS_ENCODER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
-
-# Cross-encoder is expensive: skip it when candidates × criteria > this limit
-CROSS_ENCODER_PAIR_LIMIT = 300
+CROSS_ENCODER_PAIR_LIMIT = 500
 
 device = 'cpu'
 bi_encoder = None
 cross_encoder = None
 
 try:
-    print(f"[1/2] Loading Bi-Encoder: {BI_ENCODER_MODEL} …")
+    print(f"[1/2] Loading Bi-Encoder: {BI_ENCODER_MODEL}")
     bi_encoder = SentenceTransformer(BI_ENCODER_MODEL, device=device)
-    print(f"      ✓ Bi-Encoder ready")
+    bi_encoder.encode(["warm-up"], normalize_embeddings=True, show_progress_bar=False)
+    print("      Bi-Encoder ready (warmed)")
 except Exception as e:
-    print(f"      ✗ Bi-Encoder failed: {e}")
+    print(f"      Bi-Encoder failed: {e}")
 
 try:
-    print(f"[2/2] Loading Cross-Encoder: {CROSS_ENCODER_MODEL} …")
+    print(f"[2/2] Loading Cross-Encoder: {CROSS_ENCODER_MODEL}")
     cross_encoder = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
-    print(f"      ✓ Cross-Encoder ready")
+    cross_encoder.predict([("warm", "up")], show_progress_bar=False)
+    print("      Cross-Encoder ready (warmed)")
 except Exception as e:
-    print(f"      ✗ Cross-Encoder unavailable (falling back to bi-encoder only): {e}")
+    print(f"      Cross-Encoder unavailable: {e}")
 
 
-# ─── Comprehensive Technical Keyword Dictionary ───────────────────────────────
 TECH_TERMS = {
-    # Programming Languages
     'python', 'java', 'javascript', 'typescript', 'golang', 'go', 'rust',
     'c++', 'cpp', 'c#', 'csharp', 'ruby', 'php', 'swift', 'kotlin', 'scala',
     'r', 'matlab', 'perl', 'shell', 'bash', 'powershell', 'lua', 'haskell',
     'elixir', 'clojure', 'dart',
-    # Web Frameworks
     'react', 'reactjs', 'angular', 'vue', 'vuejs', 'svelte', 'django',
     'flask', 'fastapi', 'spring', 'springboot', 'express', 'expressjs',
     'node', 'nodejs', 'next', 'nextjs', 'nuxt', 'rails', 'laravel',
     'dotnet', 'asp.net', 'gin', 'fiber', 'actix', 'phoenix',
-    # ML / AI
     'tensorflow', 'pytorch', 'keras', 'scikit-learn', 'sklearn', 'pandas',
     'numpy', 'transformers', 'huggingface', 'opencv', 'spacy', 'nltk',
     'xgboost', 'lightgbm', 'machine learning', 'deep learning',
     'neural network', 'nlp', 'computer vision', 'reinforcement learning',
     'generative ai', 'llm', 'gpt', 'bert',
-    # Databases
     'sql', 'nosql', 'postgres', 'postgresql', 'mysql', 'mongodb', 'redis',
     'memcached', 'cassandra', 'dynamodb', 'elasticsearch', 'opensearch',
     'sqlite', 'oracle', 'mariadb', 'neo4j', 'influxdb', 'cockroachdb',
     'supabase', 'firebase',
-    # Cloud & Infra
     'docker', 'kubernetes', 'k8s', 'aws', 'amazon web services', 'azure',
     'gcp', 'google cloud', 'terraform', 'ansible', 'puppet', 'chef',
     'cloudformation', 'pulumi', 'helm', 'istio', 'envoy',
-    # DevOps / CI-CD
     'jenkins', 'ci/cd', 'cicd', 'github actions', 'gitlab ci', 'circleci',
     'argocd', 'spinnaker', 'tekton',
-    # Messaging / Streaming
     'kafka', 'rabbitmq', 'sqs', 'sns', 'nats', 'pulsar', 'kinesis',
     'event-driven', 'pub/sub', 'pubsub', 'message queue', 'streaming',
-    # Web & API
     'rest', 'restful', 'graphql', 'grpc', 'websocket', 'api',
     'microservices', 'serverless', 'lambda', 'oauth', 'jwt', 'openapi',
-    # Architecture
     'distributed systems', 'distributed', 'scalable', 'architecture',
     'design patterns', 'solid', 'clean architecture', 'domain driven',
     'ddd', 'cqrs', 'event sourcing', 'saga', 'circuit breaker',
     'load balancing', 'high availability', 'fault tolerance',
     'cap theorem', 'eventual consistency',
-    # Testing & Quality
     'tdd', 'test driven', 'bdd', 'unit test', 'integration test', 'e2e',
     'selenium', 'cypress', 'jest', 'pytest', 'junit', 'testing',
     'code review', 'quality assurance', 'qa',
-    # Security
     'security', 'encryption', 'authentication', 'authorization', 'ssl',
     'tls', 'https', 'firewall', 'waf', 'penetration testing', 'owasp',
     'sso', 'saml', 'rbac', 'zero trust',
-    # Observability
     'monitoring', 'logging', 'observability', 'prometheus', 'grafana',
     'datadog', 'splunk', 'elk', 'kibana', 'jaeger', 'opentelemetry',
-    # Methodologies
     'agile', 'scrum', 'kanban', 'devops', 'sre', 'gitops',
-    # Infra misc
     'containers', 'orchestration', 'deployment', 'pipeline',
     'performance', 'optimization', 'caching', 'cdn', 'profiling',
     'nginx', 'apache', 'linux', 'networking',
-    # Data Eng
     'etl', 'data pipeline', 'data warehouse', 'data lake', 'spark',
     'hadoop', 'airflow', 'dbt', 'snowflake', 'redshift', 'bigquery',
-    # Version Control
     'git', 'github', 'gitlab', 'bitbucket',
-    # Mobile
     'ios', 'android', 'react native', 'flutter', 'mobile',
 }
 
+SENIOR_INDICATORS = frozenset({
+    'architect', 'lead', 'principal', 'senior', 'staff', 'director',
+    'design', 'scale', 'mentor', 'strategy', 'ownership', 'roadmap',
+    'enterprise', 'production', 'mission critical',
+    'distributed systems', 'high availability', 'fault tolerance', 'large scale',
+})
+JUNIOR_INDICATORS = frozenset({
+    'learning', 'beginner', 'basic', 'simple', 'tutorial', 'course',
+    'intern', 'junior', 'entry', 'student', 'familiar with',
+    'some experience', 'a little', 'getting started', 'not built', 'never used',
+})
 
-# ──────────────────────────────────────────────────────────────────────────────
-#  Helper functions  (optimised for speed)
-# ──────────────────────────────────────────────────────────────────────────────
-
-# Pre-split terms into single-word (set lookup) vs multi-word (compiled regex)
-_SINGLE_TERMS = {t for t in TECH_TERMS if ' ' not in t and '/' not in t}
+_SINGLE_TERMS = frozenset(t for t in TECH_TERMS if ' ' not in t and '/' not in t)
 _MULTI_TERMS  = sorted([t for t in TECH_TERMS if ' ' in t or '/' in t], key=len, reverse=True)
 _MULTI_RE     = re.compile('|'.join(re.escape(t) for t in _MULTI_TERMS), re.IGNORECASE) if _MULTI_TERMS else None
 _CAP_RE       = re.compile(r'\b[A-Z][a-zA-Z0-9]{2,}\b')
@@ -122,16 +109,13 @@ _FILLER_WORDS = frozenset({
     'when', 'where', 'what', 'which', 'while', 'most',
 })
 
+
 def extract_tech_keywords(text: str) -> set:
-    """Fast keyword extraction using set-lookup + one compiled regex."""
     found = set()
-    # Single-word terms: tokenise once, intersect with set (O(n) not O(n*m))
     words = set(re.findall(r'[a-zA-Z0-9#+.]+', text.lower()))
     found.update(words & _SINGLE_TERMS)
-    # Multi-word terms: single compiled regex pass
     if _MULTI_RE:
         found.update(m.lower() for m in _MULTI_RE.findall(text))
-    # Capitalised product names not already matched
     for cap in _CAP_RE.findall(text):
         cl = cap.lower()
         if cl not in _FILLER_WORDS:
@@ -139,21 +123,32 @@ def extract_tech_keywords(text: str) -> set:
     return found
 
 
-def parse_rubric_criteria(rubric_text: str) -> list:
-    """
-    Parse rubric text into individual criteria with priority detection.
-    Returns list of dicts: {text, priority, keywords, weight}
-    """
-    # Split on bullets / numbers / newlines
-    raw = re.split(r'\n+|\s*[\*\-•–]\s+|\s*\d+[\.\)]\s+', rubric_text)
-    raw = [p.strip() for p in raw if len(p.strip()) > 5]
+def detect_experience_level(text: str) -> dict:
+    lower = text.lower()
+    words = set(re.findall(r'[a-z]+', lower))
+    sr = len(SENIOR_INDICATORS & words)
+    jr = len(JUNIOR_INDICATORS & words)
+    for phrase in SENIOR_INDICATORS:
+        if ' ' in phrase and phrase in lower:
+            sr += 2
+    for phrase in JUNIOR_INDICATORS:
+        if ' ' in phrase and phrase in lower:
+            jr += 2
+    total = sr + jr or 1
+    level = "Senior" if sr > jr + 1 else "Junior" if jr > sr + 1 else "Mid-Level"
+    confidence = abs(sr - jr) / total
+    return {"level": level, "senior_signals": sr, "junior_signals": jr,
+            "confidence": round(min(confidence, 1.0), 2)}
 
+
+def parse_rubric_criteria(rubric_text: str) -> list:
+    raw = re.split(r'\n+|\s*[\*\-\u2022\u2013]\s+|\s*\d+[\.\)]\s+', rubric_text)
+    raw = [p.strip() for p in raw if len(p.strip()) > 5]
     skip_starts = [
         'we are looking', 'the ideal candidate', 'looking for',
         'about the role', 'job description', 'requirements include',
         'the candidate should', 'the candidate must',
     ]
-
     criteria = []
     for point in raw:
         if len(point.split()) < 3:
@@ -161,8 +156,6 @@ def parse_rubric_criteria(rubric_text: str) -> list:
         lower = point.lower()
         if any(lower.startswith(s) for s in skip_starts):
             continue
-
-        # Priority detection
         must_kw = ['must', 'required', 'essential', 'critical', 'mandatory', 'strong']
         nice_kw = ['preferred', 'nice to have', 'bonus', 'plus', 'ideally', 'optional']
         if any(k in lower for k in must_kw):
@@ -171,29 +164,19 @@ def parse_rubric_criteria(rubric_text: str) -> list:
             priority, weight = 'nice-to-have', 0.7
         else:
             priority, weight = 'normal', 1.0
-
         criteria.append({
-            'text': point,
-            'priority': priority,
-            'keywords': extract_tech_keywords(point),
-            'weight': weight,
+            'text': point, 'priority': priority,
+            'keywords': extract_tech_keywords(point), 'weight': weight,
         })
-
     if not criteria:
-        return [{
-            'text': rubric_text.strip(),
-            'priority': 'normal',
-            'keywords': extract_tech_keywords(rubric_text),
-            'weight': 1.0,
-        }]
+        return [{'text': rubric_text.strip(), 'priority': 'normal',
+                 'keywords': extract_tech_keywords(rubric_text), 'weight': 1.0}]
     return criteria
 
 
-def detect_columns(df: pd.DataFrame):
-    """Return (name_col, response_col) after smart auto-detection."""
+def detect_columns(df):
     text_cols = [c for c in df.columns if df[c].dtype == object]
     name_col = response_col = None
-
     for col in text_cols:
         cl = str(col).lower().strip()
         if any(t in cl for t in ['name', 'candidate', 'applicant', 'person']):
@@ -202,7 +185,6 @@ def detect_columns(df: pd.DataFrame):
                                   'resume', 'summary', 'experience', 'skills',
                                   'qualification', 'background', 'about']):
             response_col = col
-
     if not name_col:
         name_col = text_cols[0] if text_cols else df.columns[0]
     if not response_col:
@@ -217,8 +199,7 @@ def detect_columns(df: pd.DataFrame):
     return name_col, response_col
 
 
-def build_full_response(row, name_col: str, text_cols: list) -> str:
-    """Merge every text column (except name) into one string."""
+def build_full_response(row, name_col, text_cols):
     parts = []
     for col in text_cols:
         if col == name_col:
@@ -231,105 +212,70 @@ def build_full_response(row, name_col: str, text_cols: list) -> str:
 
 def sigmoid(x):
     x = np.asarray(x, dtype=np.float64)
-    return np.where(x >= 0,
-                    1 / (1 + np.exp(-x)),
-                    np.exp(x) / (1 + np.exp(x)))
+    return np.where(x >= 0, 1 / (1 + np.exp(-x)), np.exp(x) / (1 + np.exp(x)))
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-#  Core evaluation
-# ──────────────────────────────────────────────────────────────────────────────
-
-def evaluate_with_strict_model(
-    candidates_df: pd.DataFrame,
-    rubric_text: str,
-    strictness_threshold: float = 0.55,
-):
-    """
-    Multi-signal evaluation pipeline:
-      Bi-Encoder (fast semantic) + Cross-Encoder (precise) + Keyword overlap
-      → per-criterion scores → weighted aggregate → calibrated decision.
-    """
+def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=0.60):
     if bi_encoder is None:
-        raise RuntimeError("Bi-encoder model failed to load — cannot evaluate.")
+        raise RuntimeError("Bi-encoder model failed to load.")
+    t_start = time.time()
 
-    # ── 1. Parse rubric ──────────────────────────────────────────────────
     criteria = parse_rubric_criteria(rubric_text)
     all_rubric_kw = set()
     for c in criteria:
         all_rubric_kw.update(c['keywords'])
 
-    print(f"\n{'=' * 60}")
-    print(f"Parsed {len(criteria)} rubric criteria:")
-    for idx, c in enumerate(criteria):
-        print(f"  [{idx+1}] (w={c['weight']:.1f}) {c['text'][:80]}")
-        print(f"       kw: {c['keywords']}")
-    print(f"All rubric keywords ({len(all_rubric_kw)}): {all_rubric_kw}")
-    print(f"{'=' * 60}\n")
-
-    # ── 2. Detect columns & build texts ──────────────────────────────────
     name_col, resp_col = detect_columns(candidates_df)
     text_cols = [c for c in candidates_df.columns if candidates_df[c].dtype == object]
-
     names = candidates_df[name_col].fillna("Unknown").astype(str).tolist()
-    responses = [
-        build_full_response(row, name_col, text_cols)
-        for _, row in candidates_df.iterrows()
-    ]
+    responses = [build_full_response(row, name_col, text_cols) for _, row in candidates_df.iterrows()]
     if not responses:
-        return []
+        return [], 0.0
 
     n_cand = len(responses)
     n_crit = len(criteria)
     crit_texts = [c['text'] for c in criteria]
     crit_weights = np.array([c['weight'] for c in criteria])
 
-    # ── 3. Bi-Encoder embeddings (fast — batched) ────────────────────────
+    # Bi-Encoder (batched, fast)
     t0 = time.time()
-    crit_emb = bi_encoder.encode(crit_texts, batch_size=64,
-                                  convert_to_tensor=True,
-                                  normalize_embeddings=True)
-    resp_emb = bi_encoder.encode(responses, batch_size=256,
-                                  convert_to_tensor=True,
-                                  normalize_embeddings=True,
-                                  show_progress_bar=False)
+    crit_emb = bi_encoder.encode(crit_texts, batch_size=64, convert_to_tensor=True, normalize_embeddings=True)
+    resp_emb = bi_encoder.encode(responses, batch_size=512, convert_to_tensor=True, normalize_embeddings=True, show_progress_bar=False)
     bi_scores = util.dot_score(resp_emb, crit_emb).cpu().numpy()
-    print(f"⚡ Bi-encoder done in {time.time()-t0:.2f}s  ({n_cand} candidates × {n_crit} criteria)")
+    t_bi = time.time() - t0
 
-    # ── 4. Cross-Encoder (precise but slow — auto-skip for large sets) ───
+    # Cross-Encoder (precise)
     total_pairs = n_cand * n_crit
     use_cross = cross_encoder is not None and total_pairs <= CROSS_ENCODER_PAIR_LIMIT
     cx_scores = np.zeros((n_cand, n_crit))
+    t_cx = 0.0
     if use_cross:
         t1 = time.time()
-        pairs = [(responses[i], crit_texts[j])
-                 for i in range(n_cand) for j in range(n_crit)]
-        raw = cross_encoder.predict(pairs, batch_size=128,
-                                    show_progress_bar=False)
+        pairs = [(responses[i], crit_texts[j]) for i in range(n_cand) for j in range(n_crit)]
+        raw = cross_encoder.predict(pairs, batch_size=256, show_progress_bar=False)
         cx_scores = sigmoid(np.array(raw).reshape(n_cand, n_crit))
-        print(f"⚡ Cross-encoder done in {time.time()-t1:.2f}s  ({total_pairs} pairs)")
-    else:
-        reason = "too many pairs" if cross_encoder else "unavailable"
-        print(f"⏩ Cross-encoder skipped ({reason}: {total_pairs} pairs > {CROSS_ENCODER_PAIR_LIMIT}) — bi-encoder only")
+        t_cx = time.time() - t1
 
-    # ── 5. Adaptive thresholds (tuned by strictness 0–1) ────────────────
-    POINT_PASS    = 0.10 + strictness_threshold * 0.15   # 0.10 – 0.25
-    HIRE_THRESH   = 0.30 + strictness_threshold * 0.12   # 0.30 – 0.42
-    BORDER_THRESH = 0.18 + strictness_threshold * 0.08   # 0.18 – 0.26
-
-    print(f"Thresholds  (strictness={strictness_threshold:.2f}):")
-    print(f"  POINT_PASS={POINT_PASS:.2f}  HIRE={HIRE_THRESH:.2f}  "
-          f"BORDERLINE={BORDER_THRESH:.2f}")
-
-    # ── 6. Pre-extract all candidate keywords (batch, once) ────────────
+    # Parallel keyword + experience extraction
     t2 = time.time()
-    all_cand_kw = [extract_tech_keywords(r) for r in responses]
-    print(f"⚡ Keyword extraction done in {time.time()-t2:.2f}s")
+    with ThreadPoolExecutor(max_workers=min(8, n_cand)) as pool:
+        all_cand_kw = list(pool.map(extract_tech_keywords, responses))
+        all_exp_levels = list(pool.map(detect_experience_level, responses))
+    t_kw = time.time() - t2
 
-    # ── 7. Score each candidate ──────────────────────────────────────────
+    # TIGHTENED thresholds (multi-gate)
+    POINT_PASS    = 0.12 + strictness_threshold * 0.18
+    HIRE_THRESH   = 0.38 + strictness_threshold * 0.14
+    BORDER_THRESH = 0.22 + strictness_threshold * 0.10
+    MIN_COVERAGE_HIRE   = 0.40
+    MIN_KW_HIRE         = 0.25
+    MIN_COVERAGE_BORDER = 0.20
+    MIN_QUALIFY         = 0.18
+
     results = []
     for i in range(n_cand):
         cand_kw = all_cand_kw[i]
+        exp_info = all_exp_levels[i]
         point_details = []
         weighted_pts = []
 
@@ -339,303 +285,215 @@ def evaluate_with_strict_model(
             ckw   = criteria[j]['keywords']
             kw_ov = (len(ckw & cand_kw) / len(ckw)) if ckw else 0.0
 
-            # Combine signals — adapt weights based on whether cross-encoder ran
             if use_cross:
-                pt_score = 0.50 * cx_s + 0.30 * bi_s + 0.20 * kw_ov
+                pt_score = 0.45 * cx_s + 0.30 * bi_s + 0.25 * kw_ov
             else:
-                pt_score = 0.55 * bi_s + 0.45 * kw_ov
+                pt_score = 0.50 * bi_s + 0.50 * kw_ov
 
             point_details.append({
-                'rubric_point': crit_texts[j],
-                'score': round(pt_score, 4),
-                'bi_score': round(bi_s, 4),
-                'cross_score': round(cx_s, 4),
+                'rubric_point': crit_texts[j], 'score': round(pt_score, 4),
+                'bi_score': round(bi_s, 4), 'cross_score': round(cx_s, 4),
                 'keyword_overlap': round(kw_ov, 4),
                 'matched_keywords': sorted(ckw & cand_kw),
-                'passed': pt_score >= POINT_PASS,
+                'passed': pt_score >= POINT_PASS, 'priority': criteria[j]['priority'],
             })
             weighted_pts.append(pt_score * crit_weights[j])
 
         pt_arr = np.array([p['score'] for p in point_details])
-
-        # --- Aggregate signals ---
         w_mean    = np.sum(weighted_pts) / np.sum(crit_weights)
         coverage  = np.mean([1.0 if p['passed'] else 0.0 for p in point_details])
         top_k     = max(1, n_crit // 2)
         strength  = float(np.mean(sorted(pt_arr, reverse=True)[:top_k]))
         global_kw = (len(all_rubric_kw & cand_kw) / len(all_rubric_kw)) if all_rubric_kw else 0.0
-        depth     = min(1.0, len(responses[i].split()) / 20.0)
+        depth     = min(1.0, len(responses[i].split()) / 25.0)
+        consistency = 1.0 - min(1.0, float(np.std(pt_arr)) * 2.5)
 
-        # Favour candidates who excel in some areas (strength-weighted)
+        must_have_pts = [p for p in point_details if p['priority'] == 'must-have']
+        must_have_pass_rate = (
+            np.mean([1.0 if p['passed'] else 0.0 for p in must_have_pts])
+            if must_have_pts else 1.0
+        )
+
         final = (
-            0.25 * w_mean +
-            0.15 * coverage +
-            0.30 * strength +
-            0.15 * global_kw +
-            0.15 * depth
+            0.22 * w_mean + 0.15 * coverage + 0.25 * strength +
+            0.18 * global_kw + 0.08 * depth + 0.07 * consistency +
+            0.05 * must_have_pass_rate
         )
         final = min(final, 0.99)
 
-        # Preliminary decision (refined by relative ranking below)
-        if final >= HIRE_THRESH:
+        # Multi-gate decision
+        if final >= HIRE_THRESH and coverage >= MIN_COVERAGE_HIRE and global_kw >= MIN_KW_HIRE:
             decision = "Hire"
-        elif final >= BORDER_THRESH:
+        elif final >= BORDER_THRESH and coverage >= MIN_COVERAGE_BORDER:
             decision = "Borderline"
         else:
             decision = "Reject"
 
-        # --- Detailed analysis fields ---
         matched_kw_all = sorted(all_rubric_kw & cand_kw)
         missing_kw_all = sorted(all_rubric_kw - cand_kw)
-        sorted_pts = sorted(point_details, key=lambda x: x['score'], reverse=True)
         passed_pts = [p for p in point_details if p['passed']]
         failed_pts = [p for p in point_details if not p['passed']]
-
-        strengths = [
-            f"{p['rubric_point'][:80]} ({p['score']*100:.0f}%)"
-            for p in sorted_pts if p['passed']
-        ]
-        weaknesses = [
-            f"{p['rubric_point'][:80]} ({p['score']*100:.0f}%)"
-            for p in sorted(failed_pts, key=lambda x: x['score'])
-        ]
-        gaps = []
+        sorted_pts = sorted(point_details, key=lambda x: x['score'], reverse=True)
+        strengths_list = [f"{p['rubric_point'][:80]} ({p['score']*100:.0f}%)" for p in sorted_pts if p['passed']]
+        weaknesses_list = [f"{p['rubric_point'][:80]} ({p['score']*100:.0f}%)" for p in sorted(failed_pts, key=lambda x: x['score'])]
+        gaps_list = []
         for fp in failed_pts:
             j_idx = point_details.index(fp)
             miss = sorted(criteria[j_idx]['keywords'] - cand_kw)
             if miss:
-                gaps.append(f"{fp['rubric_point'][:50]}: needs {', '.join(miss[:5])}")
+                gaps_list.append(f"{fp['rubric_point'][:50]}: needs {', '.join(miss[:5])}")
 
         results.append({
-            "id": str(i + 1),
-            "name": names[i],
-            "score": round(final * 100, 2),
-            "rank": 0,
-            "decision": decision,
-            "reason": "",
-            "strengths": strengths,
-            "weaknesses": weaknesses,
-            "gaps": gaps,
-            "matched_keywords": matched_kw_all,
-            "missing_keywords": missing_kw_all,
-            "recommendation": "",
-            "response_snippet": (responses[i][:150] + "…")
-                if len(responses[i]) > 150 else responses[i],
+            "id": str(i + 1), "name": names[i],
+            "score": round(final * 100, 2), "rank": 0, "decision": decision,
+            "reason": "", "strengths": strengths_list, "weaknesses": weaknesses_list,
+            "gaps": gaps_list, "matched_keywords": matched_kw_all,
+            "missing_keywords": missing_kw_all, "recommendation": "",
+            "response_snippet": (responses[i][:150] + "\u2026") if len(responses[i]) > 150 else responses[i],
             "point_scores": point_details,
             "coverage": round(coverage * 100, 1),
             "keyword_match_rate": round(global_kw * 100, 1),
-            "_raw": final,
-            "_w_mean": w_mean, "_coverage": coverage,
-            "_strength": strength, "_kwCov": global_kw, "_depth": depth,
+            "consistency_score": round(consistency * 100, 1),
+            "experience_level": exp_info['level'],
+            "experience_confidence": exp_info['confidence'],
+            "must_have_pass_rate": round(must_have_pass_rate * 100, 1),
+            "response_depth": round(depth * 100, 1),
+            "criteria_passed": len(passed_pts),
+            "criteria_total": n_crit,
+            "technical_breadth": len(matched_kw_all),
+            "technical_depth_score": round(min(1.0, len(matched_kw_all) / max(len(all_rubric_kw), 1)) * 100, 1),
+            "_raw": final, "_w_mean": w_mean, "_coverage": coverage,
+            "_strength": strength, "_kwCov": global_kw, "_depth": depth, "_consistency": consistency,
         })
 
-    # ── 8. Relative ranking — guarantee top 1–2 get hired ─────────────
+    # Relative ranking + multi-gate
     results.sort(key=lambda r: r['_raw'], reverse=True)
     top_score = results[0]['_raw'] if results else 0
-    MIN_QUALIFY = 0.18  # scores below 18% are always Rejected
-
     for idx, r in enumerate(results):
         r['rank'] = idx + 1
         ratio = r['_raw'] / top_score if top_score > 0 else 0
-
-        # Hard floor: below 18% → Reject no matter what
         if r['_raw'] < MIN_QUALIFY:
             r['decision'] = 'Reject'
             continue
-
-        # Top candidate: Hire if qualified
-        if idx == 0:
-            r['decision'] = 'Hire'
-        # Runner-up: Hire if within 80% of top scorer
-        elif idx == 1 and ratio >= 0.80:
-            r['decision'] = 'Hire'
-        # Top 3: Borderline if within 65% of top
-        elif idx <= 2 and ratio >= 0.65:
-            if r['decision'] == 'Reject':
+        if idx == 0 and r['decision'] != 'Hire':
+            if r['_coverage'] >= MIN_COVERAGE_BORDER:
+                r['decision'] = 'Borderline'
+        if idx == 1 and ratio >= 0.75:
+            if r['decision'] == 'Reject' and r['_coverage'] >= MIN_COVERAGE_BORDER:
+                r['decision'] = 'Borderline'
+        if idx == 2 and ratio >= 0.65:
+            if r['decision'] == 'Reject' and r['_coverage'] >= MIN_COVERAGE_BORDER:
                 r['decision'] = 'Borderline'
 
-    # ── 9. Star ratings & letter grades ──────────────────────────────────
+    # Percentile
+    scores_arr = np.array([r['score'] for r in results])
+    for r in results:
+        r['percentile'] = round(float(np.sum(scores_arr <= r['score']) / len(scores_arr) * 100), 1)
+
+    # Confidence score
+    for r in results:
+        s = r['score'] / 100
+        cov = r['coverage'] / 100
+        kw = r['keyword_match_rate'] / 100
+        signal_agreement = 1.0 - float(np.std([s, cov, kw]) * 2)
+        data_richness = min(1.0, len(r.get('response_snippet', '')) / 80)
+        r['confidence'] = round(max(0, min(100, signal_agreement * 60 + data_richness * 40)), 1)
+
+    # Stars & grades (recalibrated tighter)
     for r in results:
         s = r['score']
-        if s >= 55:   r['star_rating'] = 5
-        elif s >= 40: r['star_rating'] = 4
-        elif s >= 28: r['star_rating'] = 3
-        elif s >= 16: r['star_rating'] = 2
+        if s >= 60:   r['star_rating'] = 5
+        elif s >= 45: r['star_rating'] = 4
+        elif s >= 32: r['star_rating'] = 3
+        elif s >= 20: r['star_rating'] = 2
         else:         r['star_rating'] = 1
-
-        if s >= 60:   r['grade'] = 'A+'
-        elif s >= 50: r['grade'] = 'A'
-        elif s >= 40: r['grade'] = 'B+'
-        elif s >= 32: r['grade'] = 'B'
-        elif s >= 24: r['grade'] = 'C+'
-        elif s >= 16: r['grade'] = 'C'
-        elif s >= 10: r['grade'] = 'D'
+        if s >= 65:   r['grade'] = 'A+'
+        elif s >= 55: r['grade'] = 'A'
+        elif s >= 45: r['grade'] = 'B+'
+        elif s >= 38: r['grade'] = 'B'
+        elif s >= 30: r['grade'] = 'C+'
+        elif s >= 22: r['grade'] = 'C'
+        elif s >= 14: r['grade'] = 'D'
         else:         r['grade'] = 'F'
 
-    # ── 10. Borderline analysis tool ─────────────────────────────────────
+    # Borderline analysis
     hire_thresh_pct = HIRE_THRESH * 100
     for r in results:
         if r['decision'] == 'Borderline':
             proximity = min(99, round(r['score'] / hire_thresh_pct * 100, 1))
             gap_pct = round(max(0, hire_thresh_pct - r['score']), 1)
-
             interview_qs = []
-            weak_pts = sorted(
-                [p for p in r['point_scores'] if not p['passed']],
-                key=lambda p: p['score']
-            )
+            weak_pts = sorted([p for p in r['point_scores'] if not p['passed']], key=lambda p: p['score'])
             for wp in weak_pts[:3]:
-                topic = wp['rubric_point'][:60].rstrip('.')
-                interview_qs.append(
-                    f"Describe your hands-on experience with: {topic}"
-                )
+                interview_qs.append(f"Describe your hands-on experience with: {wp['rubric_point'][:60].rstrip('.')}")
             if r['missing_keywords']:
-                top_miss = r['missing_keywords'][:4]
-                interview_qs.append(
-                    f"Walk us through a project involving: {', '.join(top_miss)}"
-                )
-
-            improvements = []
-            for wp in weak_pts[:3]:
-                improvements.append(
-                    f"Demonstrate depth in: {wp['rubric_point'][:55].rstrip('.')}"
-                )
-
-            closeness = "Very close" if proximity >= 85 else \
-                        "Moderately close" if proximity >= 65 else "Needs improvement"
+                interview_qs.append(f"Walk us through a project involving: {', '.join(r['missing_keywords'][:4])}")
+            improvements = [f"Demonstrate depth in: {wp['rubric_point'][:55].rstrip('.')}" for wp in weak_pts[:3]]
+            closeness = "Very close" if proximity >= 85 else "Moderately close" if proximity >= 65 else "Needs improvement"
             r['borderline_analysis'] = {
-                'proximity_to_hire': proximity,
-                'gap_percentage': gap_pct,
-                'interview_questions': interview_qs,
-                'improvement_areas': improvements,
-                'verdict': f"{closeness} — {gap_pct:.1f}% gap to hire threshold",
+                'proximity_to_hire': proximity, 'gap_percentage': gap_pct,
+                'interview_questions': interview_qs, 'improvement_areas': improvements,
+                'verdict': f"{closeness} - {gap_pct:.1f}% gap to hire threshold",
             }
         else:
             r['borderline_analysis'] = None
 
-    # ── 11. Build catchy reasons & recommendations ────────────────────────
+    # Reasons & recommendations
     for r in results:
-        cov = r['coverage']
-        score = r['score']
-        dec = r['decision']
-        stars_txt = '⭐' * r['star_rating'] + '☆' * (5 - r['star_rating'])
+        cov = r['coverage']; score = r['score']; dec = r['decision']
+        sr = r.get('star_rating', 0)
         lines = []
-
         if dec == 'Hire':
-            lines.append(
-                f"🏆 TOP PICK — Rank #{r['rank']} | {r['grade']} | {stars_txt}"
-            )
-            lines.append(
-                f"✅ Strong match with {cov:.0f}% rubric coverage "
-                f"and {score:.1f}% overall alignment."
-            )
+            lines.append(f"TOP PICK - Rank #{r['rank']} | {r.get('grade','')} | {sr}/5 stars")
+            lines.append(f"Strong match with {cov:.0f}% rubric coverage and {score:.1f}% overall alignment.")
+            lines.append(f"{r['criteria_passed']}/{r['criteria_total']} criteria passed | Confidence: {r['confidence']}%")
             if r['strengths']:
-                lines.append(f"💪 Excels in: {'; '.join(r['strengths'][:3])}")
+                lines.append(f"Excels in: {'; '.join(r['strengths'][:3])}")
         elif dec == 'Borderline':
             ba = r['borderline_analysis']
-            lines.append(
-                f"⚠️ BORDERLINE — Rank #{r['rank']} | {r['grade']} | {stars_txt}"
-            )
-            lines.append(
-                f"📊 {cov:.0f}% coverage, {score:.1f}% fit — "
-                f"{ba['proximity_to_hire']:.0f}% toward hire threshold."
-            )
+            lines.append(f"BORDERLINE - Rank #{r['rank']} | {r.get('grade','')} | {sr}/5 stars")
+            lines.append(f"{cov:.0f}% coverage, {score:.1f}% fit - {ba['proximity_to_hire']:.0f}% toward hire threshold.")
+            lines.append(f"{r['criteria_passed']}/{r['criteria_total']} criteria passed | Exp: {r['experience_level']}")
             if r['strengths']:
-                lines.append(f"💪 Shows promise in: {'; '.join(r['strengths'][:2])}")
-            lines.append(
-                f"🔧 Gap to close: {ba['gap_percentage']:.1f}% — "
-                f"could be bridged with a focused interview."
-            )
+                lines.append(f"Shows promise in: {'; '.join(r['strengths'][:2])}")
+            lines.append(f"Gap to close: {ba['gap_percentage']:.1f}% - could be bridged with a focused interview.")
         else:
-            lines.append(
-                f"❌ NOT RECOMMENDED — Rank #{r['rank']} | {r['grade']} | {stars_txt}"
-            )
-            lines.append(
-                f"📊 Only {cov:.0f}% coverage and {score:.1f}% overall fit."
-            )
-
+            lines.append(f"NOT RECOMMENDED - Rank #{r['rank']} | {r.get('grade','')} | {sr}/5 stars")
+            lines.append(f"Only {cov:.0f}% coverage and {score:.1f}% overall fit.")
+            lines.append(f"{r['criteria_passed']}/{r['criteria_total']} criteria passed | Exp: {r['experience_level']}")
         if r['matched_keywords']:
-            lines.append(
-                f"🔑 Skills detected: {', '.join(r['matched_keywords'][:10])}"
-            )
+            lines.append(f"Skills detected: {', '.join(r['matched_keywords'][:10])}")
         if r['missing_keywords'] and dec != 'Hire':
-            lines.append(
-                f"🔍 Missing: {', '.join(r['missing_keywords'][:6])}"
-            )
-
-        # Recommendation
+            lines.append(f"Missing: {', '.join(r['missing_keywords'][:6])}")
         if dec == 'Hire':
-            best_area = r['strengths'][0].split('(')[0].strip() \
-                if r['strengths'] else 'general competency'
-            r['recommendation'] = (
-                f"🎯 Proceed to interview — Top {r['rank']} candidate. "
-                f"Covers {cov:.0f}% of requirements with "
-                f"{len(r['matched_keywords'])} matching skills. "
-                f"Strongest in: {best_area}."
-            )
+            best_area = r['strengths'][0].split('(')[0].strip() if r['strengths'] else 'general competency'
+            r['recommendation'] = f"Proceed to interview - Top {r['rank']} candidate. Covers {cov:.0f}% of requirements with {len(r['matched_keywords'])} matching skills."
         elif dec == 'Borderline':
             gap_areas = [w.split('(')[0].strip() for w in r['weaknesses'][:2]]
-            r['recommendation'] = (
-                f"💡 Worth a screening call — "
-                f"{r['borderline_analysis']['proximity_to_hire']:.0f}% "
-                f"toward hire threshold. "
-                f"Probe: {'; '.join(gap_areas) if gap_areas else 'technical depth'}. "
-                f"Potential to grow into role."
-            )
+            r['recommendation'] = f"Worth a screening call - {r['borderline_analysis']['proximity_to_hire']:.0f}% toward hire threshold. Probe: {'; '.join(gap_areas) if gap_areas else 'technical depth'}."
         else:
             total_kw = len(r['matched_keywords']) + len(r['missing_keywords'])
-            r['recommendation'] = (
-                f"📋 Does not meet requirements — missing "
-                f"{len(r['missing_keywords'])} of {total_kw} expected skills. "
-                f"Consider for other roles or future openings."
-            )
-
+            r['recommendation'] = f"Does not meet requirements - missing {len(r['missing_keywords'])} of {total_kw} expected skills."
         r['reason'] = "\n".join(lines)
-
-    # ── Debug log ─────────────────────────────────────────────────────────
-    for r in results:
-        print(f"\n{'─' * 55}")
-        print(f"  #{r['rank']} {r['name']}  →  {r['decision']} "
-              f"({r['grade']}, {'⭐'*r['star_rating']})")
-        print(f"  wMean={r['_w_mean']:.3f}  cov={r['_coverage']:.2f}  "
-              f"str={r['_strength']:.3f}  kwCov={r['_kwCov']:.2f}  "
-              f"depth={r['_depth']:.2f}")
-        print(f"  ★ FINAL={r['_raw']:.4f}  SCORE={r['score']}%")
-        for pd_ in r['point_scores']:
-            tag = "✓" if pd_['passed'] else "✗"
-            print(f"    {tag} [{pd_['score']:.3f}] bi={pd_['bi_score']:.2f} "
-                  f"cx={pd_['cross_score']:.2f} kw={pd_['keyword_overlap']:.2f}  "
-                  f"{pd_['rubric_point'][:55]}")
 
     # Clean internal keys
     for r in results:
-        for k in ('_raw', '_w_mean', '_coverage', '_strength',
-                  '_kwCov', '_depth'):
+        for k in ('_raw', '_w_mean', '_coverage', '_strength', '_kwCov', '_depth', '_consistency'):
             r.pop(k, None)
 
-    total_time = time.time() - t0
-    print(f"\n🏁 Total evaluation: {total_time:.2f}s for {n_cand} candidates")
-    return results
+    total_time = time.time() - t_start
+    print(f"Total: {total_time:.2f}s for {n_cand} candidates (bi={t_bi:.2f}s cx={t_cx:.2f}s kw={t_kw:.2f}s)")
+    return results, round(total_time, 2)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-#  Entry point called from FastAPI
-# ──────────────────────────────────────────────────────────────────────────────
-
-def process_evaluation_request(
-    candidates_file_bytes: bytes,
-    rubric_text: bytes,
-    candidates_filename: str,
-):
+def process_evaluation_request(candidates_file_bytes, rubric_text, candidates_filename):
     try:
         if candidates_filename.endswith('.csv'):
             df = pd.read_csv(io.BytesIO(candidates_file_bytes))
         else:
             df = pd.read_excel(io.BytesIO(candidates_file_bytes))
-
         text = rubric_text.decode('utf-8', errors='ignore')
-        results = evaluate_with_strict_model(df, text, strictness_threshold=0.55)
-
+        results, eval_time = evaluate_with_strict_model(df, text, strictness_threshold=0.60)
         return {
             "status": "success",
             "data": results,
@@ -645,8 +503,8 @@ def process_evaluation_request(
                 "borderline": sum(1 for r in results if r['decision'] == 'Borderline'),
                 "rejected": sum(1 for r in results if r['decision'] == 'Reject'),
             },
+            "eval_time_seconds": eval_time,
         }
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        import traceback; traceback.print_exc()
         return {"status": "error", "message": str(e)}
