@@ -65,6 +65,11 @@
 			"label": "Git Push Fix",
 			"type": "shell",
 			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git commit -m 'Fix: reject scores below 18%, tighten borderline promotion' && git push origin main"
+		},
+		{
+			"label": "Check Git Status",
+			"type": "shell",
+			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git status --short && git diff --cached --stat"
 		}
 	]
 }
