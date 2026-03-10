@@ -40,8 +40,10 @@ async def evaluate_candidates(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Serve React App
-app.mount("/", StaticFiles(directory="../frontend/dist", html=True), name="static")
+# Serve React App (only if dist exists — on Railway, frontend is separate)
+frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+if os.path.isdir(frontend_dist):
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")
 
 @app.exception_handler(404)
 async def catch_all(request, exc):

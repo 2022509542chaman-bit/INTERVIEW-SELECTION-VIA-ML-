@@ -86,7 +86,8 @@ function App() {
     formData.append("rubric_file", rubricFile);
 
     try {
-      const response = await fetch("/evaluate", {
+      const apiBase = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${apiBase}/evaluate`, {
         method: "POST",
         body: formData,
       });

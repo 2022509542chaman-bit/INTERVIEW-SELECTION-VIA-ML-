@@ -70,6 +70,16 @@
 			"label": "Check Git Status",
 			"type": "shell",
 			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git status --short && git diff --cached --stat"
+		},
+		{
+			"label": "Git Push All",
+			"type": "shell",
+			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git commit -m 'Update tasks.json' && git push origin main"
+		},
+		{
+			"label": "Git Push Production",
+			"type": "shell",
+			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git commit -m 'Production-ready: configurable API URL + flexible static serving for Railway' && git push origin main"
 		}
 	]
 }
