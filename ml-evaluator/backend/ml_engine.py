@@ -432,24 +432,25 @@ def evaluate_with_strict_model(
     # ── 8. Relative ranking — guarantee top 1–2 get hired ─────────────
     results.sort(key=lambda r: r['_raw'], reverse=True)
     top_score = results[0]['_raw'] if results else 0
-    MIN_QUALIFY = 0.08  # low bar — let relative ranking do the work
+    MIN_QUALIFY = 0.18  # scores below 18% are always Rejected
 
     for idx, r in enumerate(results):
         r['rank'] = idx + 1
         ratio = r['_raw'] / top_score if top_score > 0 else 0
 
-        # Top candidate: always Hire if minimally qualified
-        if idx == 0 and r['_raw'] >= MIN_QUALIFY:
+        # Hard floor: below 18% → Reject no matter what
+        if r['_raw'] < MIN_QUALIFY:
+            r['decision'] = 'Reject'
+            continue
+
+        # Top candidate: Hire if qualified
+        if idx == 0:
             r['decision'] = 'Hire'
-        # Runner-up: Hire if within 75% of top scorer
-        elif idx == 1 and ratio >= 0.75 and r['_raw'] >= MIN_QUALIFY:
+        # Runner-up: Hire if within 80% of top scorer
+        elif idx == 1 and ratio >= 0.80:
             r['decision'] = 'Hire'
-        # Top 3: at least Borderline if within 55% of top
-        elif idx <= 2 and ratio >= 0.55 and r['_raw'] >= MIN_QUALIFY * 0.8:
-            if r['decision'] == 'Reject':
-                r['decision'] = 'Borderline'
-        # Others: Borderline if within 45% of top
-        elif ratio >= 0.45 and r['_raw'] >= MIN_QUALIFY:
+        # Top 3: Borderline if within 65% of top
+        elif idx <= 2 and ratio >= 0.65:
             if r['decision'] == 'Reject':
                 r['decision'] = 'Borderline'
 

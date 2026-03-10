@@ -50,6 +50,21 @@
 			"label": "Git Push Features",
 			"type": "shell",
 			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git commit -m 'Rich CSV export, borderline decision tool, star ratings & grades, tuned scoring for top 1-2 hire' && git push origin main"
+		},
+		{
+			"label": "Kill Backend",
+			"type": "shell",
+			"command": "lsof -ti:8000 | xargs kill -9 2>/dev/null; sleep 1; echo 'killed'"
+		},
+		{
+			"label": "Test v3",
+			"type": "shell",
+			"command": "curl -s --max-time 60 -X POST http://localhost:5173/evaluate -F 'candidates_file=@/Users/chamanpreetsingh/Documents/ml-evaluator/ml-evaluator/candidates.csv' -F 'rubric_file=@/Users/chamanpreetsingh/Documents/ml-evaluator/ml-evaluator/rubric.txt' | python3 -c \"import sys,json; d=json.load(sys.stdin); [print(f\\\"#{r['rank']} {r['name']:15s} {r['score']:5.1f}%  {r['decision']}\\\") for r in d['data']]; s=d['summary']; print(f\\\"\\nHired:{s['hired']} Border:{s['borderline']} Reject:{s['rejected']}\\\")\""
+		},
+		{
+			"label": "Git Push Fix",
+			"type": "shell",
+			"command": "cd /Users/chamanpreetsingh/Documents/ml-evaluator && git add -A && git commit -m 'Fix: reject scores below 18%, tighten borderline promotion' && git push origin main"
 		}
 	]
 }
