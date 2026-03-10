@@ -1,0 +1,9 @@
+.venv/
+.vite/
+.git/
+__pycache__/
+*.pyc
+node_modules/
+ml-evaluator/frontend/node_modules/
+ml-evaluator/frontend/dist/
+*.egg-info/
