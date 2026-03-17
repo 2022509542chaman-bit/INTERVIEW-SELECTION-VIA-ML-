@@ -352,84 +352,237 @@ function App() {
                     const sorted = [...results].sort((a, b) => a.rank - b.rank);
                     const esc = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
                     const starStr = (n: number) => '★'.repeat(n || 0) + '☆'.repeat(5 - (n || 0));
-                    const rubricPts = sorted[0]?.point_scores?.map(p => p.rubric_point.slice(0, 50)) || [];
-                    const lines: string[] = [];
+                    const decIcon = (d: string) => d === 'Hire' ? '✅ HIRE' : d === 'Borderline' ? '⚠️ BORDERLINE' : '❌ REJECT';
+                    const rubricPts = sorted[0]?.point_scores?.map(p => p.rubric_point) || [];
+                    const now = new Date();
+                    const dateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+                    const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                    const L: string[] = [];
+                    const row = (cols: string[]) => L.push(cols.map(c => esc(c)).join(','));
+                    const blank = () => L.push('');
+                    const divider = (cols: number) => L.push(Array(cols).fill(esc('─────────────────')).join(','));
+                    const avgScore = sorted.length ? (sorted.reduce((a, r) => a + r.score, 0) / sorted.length) : 0;
+                    const hireRate = sorted.length ? ((summary.hired / sorted.length) * 100) : 0;
 
-                    // Report header
-                    lines.push(esc('CANDIDATE EVALUATION REPORT'));
-                    lines.push(esc(`Generated: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}` ));
-                    lines.push(esc(`Summary → Total: ${summary.total} | Hired: ${summary.hired} | Borderline: ${summary.borderline} | Rejected: ${summary.rejected}`));
-                    lines.push('');
+                    // ═══ SECTION 1: REPORT COVER ═══
+                    row(['ML CANDIDATE EVALUATION REPORT', '', '', '', '', '']);
+                    blank();
+                    row(['Report Generated:', dateStr + ' at ' + timeStr, '', '', '', '']);
+                    row(['Assessment Engine:', 'ML Evaluator AI — Bi-Encoder + Cross-Encoder + NLP', '', '', '', '']);
+                    row(['Evaluation Time:', `${evalTime?.toFixed(1) ?? '?'}s`, '', '', '', '']);
+                    blank();
+                    divider(6);
+                    blank();
 
-                    const headers = [
-                      'Rank', 'Candidate', 'Grade', 'Rating', 'Decision',
-                      'Score (%)', 'Percentile', 'Confidence (%)',
-                      'Coverage (%)', 'Keyword Match (%)', 'Consistency (%)',
-                      'Must-Have Pass (%)', 'Criteria Passed', 'Criteria Total',
-                      'Tech Breadth', 'Tech Depth (%)', 'Response Depth (%)',
-                      'Experience Level', 'Experience Confidence',
-                      'Top Strengths', 'Areas of Concern',
-                      'Skills Detected', 'Skills Missing',
-                      'Full Assessment', 'Recommendation',
-                      ...rubricPts.map(rp => `[Rubric] ${rp}`)
-                    ];
-                    lines.push(headers.map(h => esc(h)).join(','));
+                    // ═══ SECTION 2: EXECUTIVE SUMMARY ═══
+                    row(['EXECUTIVE SUMMARY', '', '', '', '', '']);
+                    blank();
+                    row(['Metric', 'Value', '', '', '', '']);
+                    divider(6);
+                    row(['Total Candidates Evaluated', String(summary.total), '', '', '', '']);
+                    row(['Recommended for Hire', `${summary.hired} candidate(s)`, '', '', '', '']);
+                    row(['Borderline / Further Review', `${summary.borderline} candidate(s)`, '', '', '', '']);
+                    row(['Not Recommended', `${summary.rejected} candidate(s)`, '', '', '', '']);
+                    row(['Average Score', `${avgScore.toFixed(1)}%`, '', '', '', '']);
+                    row(['Hire Rate', `${hireRate.toFixed(0)}%`, '', '', '', '']);
+                    blank();
+                    divider(6);
+                    blank();
 
+                    // ═══ SECTION 3: RANKING OVERVIEW ═══
+                    row(['RANKING OVERVIEW', '', '', '', '', '']);
+                    blank();
+                    row(['Rank', 'Candidate', 'Grade', 'Stars', 'Score', 'Decision']);
+                    divider(6);
                     sorted.forEach(r => {
-                      const dec = r.decision === 'Hire' ? '✅ HIRE'
-                        : r.decision === 'Borderline' ? '⚠️ BORDERLINE'
-                        : '❌ REJECT';
-                      const rubricScores = r.point_scores?.map(p =>
-                        `${(p.score * 100).toFixed(0)}% ${p.passed ? '✓ Pass' : '✗ Fail'}`
-                      ) || [];
-                      const row = [
+                      row([
                         `#${r.rank}`,
-                        esc(r.name),
+                        r.name,
                         r.grade || 'N/A',
-                        esc(starStr(r.star_rating)),
-                        esc(dec),
-                        r.score.toFixed(1),
-                        (r.percentile ?? 0).toFixed(1),
-                        (r.confidence ?? 0).toFixed(1),
-                        (r.coverage || 0).toFixed(1),
-                        (r.keyword_match_rate || 0).toFixed(1),
-                        (r.consistency_score ?? 0).toFixed(1),
-                        (r.must_have_pass_rate ?? 0).toFixed(1),
-                        String(r.criteria_passed ?? 0),
-                        String(r.criteria_total ?? 0),
-                        String(r.technical_breadth ?? 0),
-                        (r.technical_depth_score ?? 0).toFixed(1),
-                        (r.response_depth ?? 0).toFixed(1),
-                        r.experience_level ?? 'Unknown',
-                        String(r.experience_confidence ?? 0),
-                        esc(r.strengths?.join(' | ') || 'None identified'),
-                        esc([...(r.weaknesses || []), ...(r.gaps || [])].join(' | ') || 'None'),
-                        esc(r.matched_keywords?.join(', ') || 'None'),
-                        esc(r.missing_keywords?.join(', ') || 'None'),
-                        esc(r.reason?.replace(/\n/g, ' ║ ') || ''),
-                        esc(r.recommendation || ''),
-                        ...rubricScores.map(s => esc(s))
-                      ];
-                      lines.push(row.join(','));
+                        starStr(r.star_rating),
+                        `${r.score.toFixed(1)}%`,
+                        decIcon(r.decision)
+                      ]);
                     });
+                    blank();
+                    divider(6);
+                    blank();
 
-                    lines.push('');
-                    lines.push(esc('Powered by ML Candidate Evaluator AI'));
+                    // ═══ SECTION 4: DETAILED SCORECARD ═══
+                    row(['DETAILED PERFORMANCE SCORECARD', '', '', '', '', '']);
+                    blank();
+                    row([
+                      'Rank', 'Candidate', 'Score', 'Decision', 'Coverage', 'Keyword Match',
+                      'Consistency', 'Confidence', 'Percentile',
+                      'Must-Have Pass', 'Criteria Passed', 'Tech Breadth',
+                      'Tech Depth', 'Response Depth', 'Experience Level'
+                    ].map(h => h).join('","').replace(/^/, '"').replace(/$/, '"'));
+                    // Fix: use raw push for this wide header
+                    L.pop(); // remove bad line
+                    L.push([
+                      'Rank', 'Candidate', 'Score', 'Decision', 'Coverage', 'Keyword Match',
+                      'Consistency', 'Confidence', 'Percentile',
+                      'Must-Have Pass', 'Criteria Passed', 'Tech Breadth',
+                      'Tech Depth', 'Response Depth', 'Experience Level'
+                    ].map(h => esc(h)).join(','));
+                    divider(15);
+                    sorted.forEach(r => {
+                      L.push([
+                        esc(`#${r.rank}`), esc(r.name), esc(`${r.score.toFixed(1)}%`),
+                        esc(decIcon(r.decision)), esc(`${r.coverage ?? 0}%`),
+                        esc(`${r.keyword_match_rate ?? 0}%`), esc(`${r.consistency_score ?? 0}%`),
+                        esc(`${r.confidence ?? 0}%`), esc(`${r.percentile ?? 0}%`),
+                        esc(`${r.must_have_pass_rate ?? 0}%`),
+                        esc(`${r.criteria_passed ?? 0}/${r.criteria_total ?? 0}`),
+                        esc(`${r.technical_breadth ?? 0} skills`),
+                        esc(`${r.technical_depth_score ?? 0}%`),
+                        esc(`${r.response_depth ?? 0}%`),
+                        esc(r.experience_level ?? 'Unknown')
+                      ].join(','));
+                    });
+                    blank();
+                    divider(15);
+                    blank();
+
+                    // ═══ SECTION 5: INDIVIDUAL CANDIDATE PROFILES ═══
+                    row(['INDIVIDUAL CANDIDATE PROFILES', '', '', '', '', '']);
+                    sorted.forEach(r => {
+                      blank();
+                      divider(6);
+                      row([`CANDIDATE: ${r.name}`, '', '', '', '', '']);
+                      divider(6);
+                      row(['Field', 'Details', '', '', '', '']);
+                      row(['Rank', `#${r.rank} of ${sorted.length}`, '', '', '', '']);
+                      row(['Grade', `${r.grade || 'N/A'} ${starStr(r.star_rating)}`, '', '', '', '']);
+                      row(['Decision', decIcon(r.decision), '', '', '', '']);
+                      row(['Overall Score', `${r.score.toFixed(1)}%`, '', '', '', '']);
+                      row(['Percentile', `${r.percentile ?? 0}%`, '', '', '', '']);
+                      row(['Confidence Level', `${r.confidence ?? 0}%`, '', '', '', '']);
+                      row(['Experience Level', `${r.experience_level ?? 'Unknown'} (confidence: ${((r.experience_confidence ?? 0) * 100).toFixed(0)}%)`, '', '', '', '']);
+                      blank();
+                      row(['', 'SCORING BREAKDOWN', '', '', '', '']);
+                      row(['Rubric Coverage', `${r.coverage ?? 0}%`, '', '', '', '']);
+                      row(['Keyword Match Rate', `${r.keyword_match_rate ?? 0}%`, '', '', '', '']);
+                      row(['Consistency Score', `${r.consistency_score ?? 0}%`, '', '', '', '']);
+                      row(['Must-Have Criteria Pass', `${r.must_have_pass_rate ?? 0}%`, '', '', '', '']);
+                      row(['Criteria Passed', `${r.criteria_passed ?? 0} out of ${r.criteria_total ?? 0}`, '', '', '', '']);
+                      row(['Technical Breadth', `${r.technical_breadth ?? 0} distinct skills identified`, '', '', '', '']);
+                      row(['Technical Depth', `${r.technical_depth_score ?? 0}%`, '', '', '', '']);
+                      row(['Response Depth', `${r.response_depth ?? 0}%`, '', '', '', '']);
+                      blank();
+                      row(['', 'ASSESSMENT', '', '', '', '']);
+                      r.reason?.split('\n').forEach(line => {
+                        if (line.trim()) row(['', line.trim(), '', '', '', '']);
+                      });
+                      blank();
+                      row(['', 'RECOMMENDATION', '', '', '', '']);
+                      row(['', r.recommendation || 'N/A', '', '', '', '']);
+                      blank();
+                      row(['', 'STRENGTHS', '', '', '', '']);
+                      if (r.strengths?.length) {
+                        r.strengths.forEach(s => row(['', `  ✓ ${s}`, '', '', '', '']));
+                      } else {
+                        row(['', '  No notable strengths identified', '', '', '', '']);
+                      }
+                      blank();
+                      row(['', 'AREAS OF CONCERN', '', '', '', '']);
+                      if (r.weaknesses?.length || r.gaps?.length) {
+                        [...(r.weaknesses || []), ...(r.gaps || [])].forEach(w => row(['', `  ✗ ${w}`, '', '', '', '']));
+                      } else {
+                        row(['', '  No significant concerns', '', '', '', '']);
+                      }
+                      blank();
+                      row(['', 'SKILLS DETECTED', '', '', '', '']);
+                      row(['', r.matched_keywords?.join(', ') || 'None', '', '', '', '']);
+                      row(['', 'MISSING SKILLS', '', '', '', '']);
+                      row(['', r.missing_keywords?.join(', ') || 'None — all key skills detected', '', '', '', '']);
+
+                      // Borderline extras
+                      if (r.decision === 'Borderline' && r.borderline_analysis) {
+                        blank();
+                        row(['', 'BORDERLINE ANALYSIS', '', '', '', '']);
+                        row(['', `Proximity to Hire: ${r.borderline_analysis.proximity_to_hire}%`, '', '', '', '']);
+                        row(['', `Gap: ${r.borderline_analysis.gap_percentage}%`, '', '', '', '']);
+                        row(['', r.borderline_analysis.verdict, '', '', '', '']);
+                        if (r.borderline_analysis.interview_questions?.length) {
+                          blank();
+                          row(['', 'SUGGESTED INTERVIEW QUESTIONS', '', '', '', '']);
+                          r.borderline_analysis.interview_questions.forEach((q, i) => row(['', `  ${i+1}. ${q}`, '', '', '', '']));
+                        }
+                      }
+                    });
+                    blank();
+                    divider(6);
+                    blank();
+
+                    // ═══ SECTION 6: RUBRIC SCORECARD MATRIX ═══
+                    if (rubricPts.length > 0) {
+                      row(['RUBRIC SCORECARD MATRIX', '', '', '', '', '']);
+                      blank();
+                      L.push([esc('Rubric Criteria'), ...sorted.map(r => esc(r.name))].join(','));
+                      divider(sorted.length + 1);
+                      rubricPts.forEach((rp, ri) => {
+                        const scores = sorted.map(r => {
+                          const pt = r.point_scores?.[ri];
+                          if (!pt) return 'N/A';
+                          return `${(pt.score * 100).toFixed(0)}% ${pt.passed ? '✓' : '✗'}`;
+                        });
+                        L.push([esc(rp), ...scores.map(s => esc(s))].join(','));
+                      });
+                      blank();
+                      divider(sorted.length + 1);
+                      blank();
+                    }
+
+                    // ═══ SECTION 7: SKILLS COMPARISON ═══
+                    row(['SKILLS COMPARISON MATRIX', '', '', '', '', '']);
+                    blank();
+                    const allSkills = new Set<string>();
+                    sorted.forEach(r => r.matched_keywords?.forEach(k => allSkills.add(k)));
+                    if (allSkills.size > 0) {
+                      L.push([esc('Skill'), ...sorted.map(r => esc(r.name))].join(','));
+                      divider(sorted.length + 1);
+                      [...allSkills].sort().forEach(skill => {
+                        const has = sorted.map(r => r.matched_keywords?.includes(skill) ? '✓ Yes' : '✗ No');
+                        L.push([esc(skill), ...has.map(h => esc(h))].join(','));
+                      });
+                      blank();
+                      divider(sorted.length + 1);
+                      blank();
+                    }
+
+                    // ═══ SECTION 8: METHODOLOGY ═══
+                    row(['METHODOLOGY & NOTES', '', '', '', '', '']);
+                    blank();
+                    row(['This report was generated using a multi-model ML evaluation pipeline:', '', '', '', '', '']);
+                    row(['1. Bi-Encoder (all-MiniLM-L6-v2) for semantic similarity scoring', '', '', '', '', '']);
+                    row(['2. Cross-Encoder (ms-marco-MiniLM-L-6-v2) for precise relevance ranking', '', '', '', '', '']);
+                    row(['3. NLP-based keyword extraction and technical skills matching', '', '', '', '', '']);
+                    row(['4. Multi-gate decision framework with configurable thresholds', '', '', '', '', '']);
+                    blank();
+                    row(['Scores reflect alignment between candidate responses and the provided rubric.', '', '', '', '', '']);
+                    row(['Decisions are based on composite scoring across semantic similarity, keyword', '', '', '', '', '']);
+                    row(['coverage, consistency, and domain-specific technical depth analysis.', '', '', '', '', '']);
+                    blank();
+                    row(['━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', '', '', '', '', '']);
+                    row(['ML Candidate Evaluator AI — Confidential Assessment Report', '', '', '', '', '']);
+                    row(['━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', '', '', '', '', '']);
+
                     const bom = '\uFEFF';
-                    const csv = bom + lines.join('\n');
+                    const csv = bom + L.join('\n');
                     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement('a');
                     link.href = url;
-                    link.download = `evaluation_report_${new Date().toISOString().slice(0,10)}.csv`;
+                    link.download = `ML_Evaluation_Report_${now.toISOString().slice(0,10)}.csv`;
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
                     URL.revokeObjectURL(url);
                   }}
-                  className="text-blue-400 font-medium text-sm hover:text-blue-300 transition-colors flex items-center gap-1"
+                  className="px-4 py-2 bg-blue-600/20 text-blue-400 font-semibold text-sm hover:bg-blue-600/30 transition-colors flex items-center gap-2 rounded-lg border border-blue-500/30"
                 >
-                  📊 Export Full Report ↓
+                  📊 Export Full Report
                 </button>
               </div>
               <div className="overflow-x-auto">
@@ -437,11 +590,13 @@ function App() {
                   <thead>
                     <tr className="bg-slate-800/50 text-slate-400 text-sm border-b border-slate-800">
                       <th className="px-4 py-4 font-semibold w-10">#</th>
-                      <th className="px-4 py-4 font-semibold w-1/6">Candidate</th>
-                      <th className="px-4 py-4 font-semibold w-1/12">Score</th>
-                      <th className="px-4 py-4 font-semibold w-1/12">Decision</th>
-                      <th className="px-4 py-4 font-semibold w-2/5">Evaluation Summary</th>
-                      <th className="px-4 py-4 font-semibold w-1/6">Matched Skills</th>
+                      <th className="px-4 py-4 font-semibold">Candidate</th>
+                      <th className="px-4 py-4 font-semibold">Score</th>
+                      <th className="px-4 py-4 font-semibold">Decision</th>
+                      <th className="px-4 py-4 font-semibold">Coverage</th>
+                      <th className="px-4 py-4 font-semibold">Confidence</th>
+                      <th className="px-4 py-4 font-semibold hidden lg:table-cell">Recommendation</th>
+                      <th className="px-4 py-4 font-semibold">Skills</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/50">
@@ -459,50 +614,70 @@ function App() {
                         </td>
                         <td className="px-4 py-4 font-medium text-white">
                           <div className="flex items-center gap-2">
-                            <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${expandedId === res.id ? 'rotate-180' : ''}`} />
+                            <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform flex-shrink-0 ${expandedId === res.id ? 'rotate-180' : ''}`} />
                             <div>
-                              <div>{res.name}</div>
-                              <div className="text-xs text-slate-500 font-normal">
-                                {res.grade || ''} <span className="text-amber-400/70">{'★'.repeat(res.star_rating || 0)}</span><span className="text-slate-600">{'☆'.repeat(5 - (res.star_rating || 0))}</span>
+                              <div className="flex items-center gap-2">
+                                {res.name}
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-semibold border border-slate-700">{res.grade}</span>
+                              </div>
+                              <div className="text-xs font-normal mt-0.5">
+                                <span className="text-amber-400/80">{'★'.repeat(res.star_rating || 0)}</span><span className="text-slate-700">{'☆'.repeat(5 - (res.star_rating || 0))}</span>
+                                <span className="text-slate-600 ml-2">P{res.percentile ?? 0}</span>
                               </div>
                             </div>
                           </div>
                         </td>
                         <td className="px-4 py-4">
-                          <div className="flex items-center gap-2">
-                            <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
-                              <div className={`h-full rounded-full ${
-                                res.decision === 'Hire' ? 'bg-emerald-500' : res.decision === 'Borderline' ? 'bg-amber-500' : 'bg-red-500'
-                              }`} style={{ width: `${Math.min(res.score, 100)}%` }} />
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <div className="w-20 h-2.5 bg-slate-700 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full transition-all duration-500 ${
+                                  res.decision === 'Hire' ? 'bg-emerald-500' : res.decision === 'Borderline' ? 'bg-amber-500' : 'bg-red-500'
+                                }`} style={{ width: `${Math.min(res.score, 100)}%` }} />
+                              </div>
+                              <span className="text-slate-200 font-mono text-sm font-bold">{res.score}%</span>
                             </div>
-                            <span className="text-slate-300 font-mono text-sm">{res.score}%</span>
                           </div>
                         </td>
                         <td className="px-4 py-4">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide ${
                             res.decision === 'Hire'
-                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                               : res.decision === 'Borderline'
-                              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                              : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                              ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                              : 'bg-red-500/15 text-red-400 border border-red-500/30'
                           }`}>
-                            {res.decision === 'Hire' ? <CheckCircle className="w-3 h-3 mr-1" />
-                              : res.decision === 'Borderline' ? <AlertTriangle className="w-3 h-3 mr-1" />
-                              : <XCircle className="w-3 h-3 mr-1" />}
+                            {res.decision === 'Hire' ? <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
+                              : res.decision === 'Borderline' ? <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />
+                              : <XCircle className="w-3.5 h-3.5 mr-1.5" />}
                             {res.decision}
                           </span>
                         </td>
-                        <td className="px-4 py-4 text-sm text-slate-400 leading-relaxed whitespace-pre-line max-w-xs">{res.reason}</td>
                         <td className="px-4 py-4">
-                          <div className="flex flex-wrap gap-1 max-w-[180px]">
-                            {(res.matched_keywords || []).slice(0, 5).map((kw, ki) => (
-                              <span key={ki} className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 text-xs rounded border border-blue-500/20">{kw}</span>
+                          <div className="text-sm font-mono">
+                            <span className="text-blue-400 font-semibold">{res.coverage ?? 0}%</span>
+                            <div className="text-[10px] text-slate-500 mt-0.5">{res.criteria_passed ?? 0}/{res.criteria_total ?? 0} criteria</div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="text-sm font-mono">
+                            <span className="text-emerald-400 font-semibold">{res.confidence ?? 0}%</span>
+                            <div className="text-[10px] text-slate-500 mt-0.5">{res.experience_level ?? '?'}</div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 hidden lg:table-cell">
+                          <p className="text-xs text-slate-400 leading-relaxed max-w-xs line-clamp-2">{res.recommendation}</p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="flex flex-wrap gap-1 max-w-[160px]">
+                            {(res.matched_keywords || []).slice(0, 4).map((kw, ki) => (
+                              <span key={ki} className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 text-[10px] rounded border border-blue-500/20">{kw}</span>
                             ))}
-                            {(res.matched_keywords || []).length > 5 && (
-                              <span className="text-xs text-slate-500">+{(res.matched_keywords || []).length - 5}</span>
+                            {(res.matched_keywords || []).length > 4 && (
+                              <span className="text-[10px] text-slate-500">+{(res.matched_keywords || []).length - 4}</span>
                             )}
                             {(res.matched_keywords || []).length === 0 && (
-                              <span className="text-xs text-slate-600 italic">None</span>
+                              <span className="text-[10px] text-slate-600 italic">None</span>
                             )}
                           </div>
                         </td>
@@ -510,7 +685,7 @@ function App() {
                       {/* Expandable Detail Panel */}
                       {expandedId === res.id && res.point_scores && (
                         <tr key={`${res.id}-details`}>
-                          <td colSpan={6} className="px-6 py-5 bg-slate-800/40">
+                          <td colSpan={8} className="px-6 py-5 bg-slate-800/40">
                             <div className="space-y-4">
                               {/* Stats row */}
                               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">

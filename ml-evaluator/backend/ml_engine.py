@@ -263,14 +263,14 @@ def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=
         all_exp_levels = list(pool.map(detect_experience_level, responses))
     t_kw = time.time() - t2
 
-    # TIGHTENED thresholds (multi-gate)
-    POINT_PASS    = 0.12 + strictness_threshold * 0.18
-    HIRE_THRESH   = 0.38 + strictness_threshold * 0.14
-    BORDER_THRESH = 0.22 + strictness_threshold * 0.10
-    MIN_COVERAGE_HIRE   = 0.40
-    MIN_KW_HIRE         = 0.25
-    MIN_COVERAGE_BORDER = 0.20
-    MIN_QUALIFY         = 0.18
+    # Calibrated thresholds (multi-gate)
+    POINT_PASS    = 0.10 + strictness_threshold * 0.14
+    HIRE_THRESH   = 0.28 + strictness_threshold * 0.12
+    BORDER_THRESH = 0.18 + strictness_threshold * 0.10
+    MIN_COVERAGE_HIRE   = 0.25
+    MIN_KW_HIRE         = 0.12
+    MIN_COVERAGE_BORDER = 0.10
+    MIN_QUALIFY         = 0.12
 
     results = []
     for i in range(n_cand):
@@ -366,22 +366,33 @@ def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=
             "_strength": strength, "_kwCov": global_kw, "_depth": depth, "_consistency": consistency,
         })
 
-    # Relative ranking + multi-gate
+    # Relative ranking + smart promotion
     results.sort(key=lambda r: r['_raw'], reverse=True)
     top_score = results[0]['_raw'] if results else 0
+    n_total = len(results)
     for idx, r in enumerate(results):
         r['rank'] = idx + 1
         ratio = r['_raw'] / top_score if top_score > 0 else 0
         if r['_raw'] < MIN_QUALIFY:
             r['decision'] = 'Reject'
             continue
+        # Promote rank #1 to Hire if they have reasonable coverage and lead clearly
         if idx == 0 and r['decision'] != 'Hire':
-            if r['_coverage'] >= MIN_COVERAGE_BORDER:
+            if r['_coverage'] >= MIN_COVERAGE_HIRE and r['_kwCov'] >= MIN_KW_HIRE:
+                r['decision'] = 'Hire'
+            elif r['_coverage'] >= MIN_COVERAGE_BORDER:
                 r['decision'] = 'Borderline'
-        if idx == 1 and ratio >= 0.75:
+        # Promote rank #2 to Hire if very close to #1, or Borderline
+        if idx == 1 and ratio >= 0.82:
+            if r['decision'] == 'Reject' and r['_coverage'] >= MIN_COVERAGE_HIRE:
+                r['decision'] = 'Hire'
+            elif r['decision'] == 'Reject' and r['_coverage'] >= MIN_COVERAGE_BORDER:
+                r['decision'] = 'Borderline'
+        elif idx == 1 and ratio >= 0.65:
             if r['decision'] == 'Reject' and r['_coverage'] >= MIN_COVERAGE_BORDER:
                 r['decision'] = 'Borderline'
-        if idx == 2 and ratio >= 0.65:
+        # Rank #3 can be Borderline if reasonably close
+        if idx == 2 and ratio >= 0.60:
             if r['decision'] == 'Reject' and r['_coverage'] >= MIN_COVERAGE_BORDER:
                 r['decision'] = 'Borderline'
 
@@ -399,20 +410,20 @@ def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=
         data_richness = min(1.0, len(r.get('response_snippet', '')) / 80)
         r['confidence'] = round(max(0, min(100, signal_agreement * 60 + data_richness * 40)), 1)
 
-    # Stars & grades (recalibrated tighter)
+    # Stars & grades (calibrated for realistic score distribution)
     for r in results:
         s = r['score']
-        if s >= 60:   r['star_rating'] = 5
-        elif s >= 45: r['star_rating'] = 4
-        elif s >= 32: r['star_rating'] = 3
-        elif s >= 20: r['star_rating'] = 2
+        if s >= 50:   r['star_rating'] = 5
+        elif s >= 38: r['star_rating'] = 4
+        elif s >= 26: r['star_rating'] = 3
+        elif s >= 16: r['star_rating'] = 2
         else:         r['star_rating'] = 1
-        if s >= 65:   r['grade'] = 'A+'
-        elif s >= 55: r['grade'] = 'A'
-        elif s >= 45: r['grade'] = 'B+'
-        elif s >= 38: r['grade'] = 'B'
-        elif s >= 30: r['grade'] = 'C+'
-        elif s >= 22: r['grade'] = 'C'
+        if s >= 55:   r['grade'] = 'A+'
+        elif s >= 45: r['grade'] = 'A'
+        elif s >= 38: r['grade'] = 'B+'
+        elif s >= 32: r['grade'] = 'B'
+        elif s >= 26: r['grade'] = 'C+'
+        elif s >= 20: r['grade'] = 'C'
         elif s >= 14: r['grade'] = 'D'
         else:         r['grade'] = 'F'
 
