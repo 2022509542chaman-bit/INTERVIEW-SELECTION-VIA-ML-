@@ -3,7 +3,7 @@
   "buildCommand": "cd ml-evaluator/frontend && npm install && npm run build",
   "outputDirectory": "ml-evaluator/frontend/dist",
   "env": {
-    "VITE_API_URL": "https://$VERCEL_URL"
+    "VITE_API_URL": ""
   },
   "rewrites": [
     {

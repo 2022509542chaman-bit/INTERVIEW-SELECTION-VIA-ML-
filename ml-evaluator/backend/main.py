@@ -188,14 +188,22 @@ async def root():
 async def evaluate_candidates(
     candidates_file: UploadFile = File(...),
     rubric_file: UploadFile = File(...),
-    batch_name: str | None = Form(default=None),
     db: Session = Depends(get_db),
 ):
     """Evaluate candidates and save results to database."""
     try:
         engine = _get_engine()
+        
+        # Validate files exist
+        if not candidates_file or not rubric_file:
+            raise HTTPException(status_code=400, detail="Both candidates_file and rubric_file are required")
+        
         candidates_bytes = await candidates_file.read()
         rubric_bytes = await rubric_file.read()
+        
+        if not candidates_bytes or not rubric_bytes:
+            raise HTTPException(status_code=400, detail="Files cannot be empty")
+        
         rubric_text = rubric_bytes.decode('utf-8', errors='ignore')
 
         result = engine(
@@ -210,12 +218,17 @@ async def evaluate_candidates(
         # Save to database
         rubric_hash = _hash_rubric(rubric_text)
         batch_id = _save_candidates_to_db(
-            db, result.get("data", []), rubric_hash, batch_name
+            db, result.get("data", []), rubric_hash, None
         )
         result["batch_id"] = batch_id
 
         return result
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"Evaluation error: {error_msg}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
