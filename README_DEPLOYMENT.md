@@ -1,23 +1,51 @@
 # 🚀 ML Evaluator - Complete Deployment Guide
 
-## ⚡ Quick Start (5 minutes)
+## ⚡ STATUS: Frontend LIVE ✅ | Backend Ready ⏳
 
-### Frontend ✅ (Already Live!)
+### Frontend ✅ (LIVE - Ready Now)
 ```
 https://ml-evaluator.vercel.app
 ```
 
-### Backend ⏳ (Deploy with One Command)
+### Backend ⏳ (Ready for Render deployment - 6 steps below)
 
-```bash
-bash /Users/chamanpreetsingh/Documents/ml-evaluator/deploy-now.sh
-```
+---
 
-That's it! The script handles:
-1. Railway authentication (opens browser)
-2. Backend deployment to Railway
-3. Gets backend URL
-4. Guides you to set Vercel environment variable
+## 📋 6 Simple Steps to Complete Deployment
+
+### STEP 1: Add Payment Method (1 minute)
+1. Go to: https://dashboard.render.com/billing
+2. Click "Add Payment Method"
+3. Enter credit card (won't charge for free tier)
+
+### STEP 2: Deploy Backend (2 minutes)
+1. Go to: https://dashboard.render.com
+2. Click "New +" → "Web Service"
+3. Connect GitHub (authorize if needed)
+4. Select: `2022509542chaman-bit/INTERVIEW-SELECTION-VIA-ML-`
+5. Branch: `main`
+6. Deploy → Render auto-detects render.yaml
+
+### STEP 3: Wait for Build (10-15 minutes)
+- First deployment downloads ML models (9.6GB)
+- Status changes: Building... → Live ✨
+
+### STEP 4: Copy Backend URL (1 minute)
+Once Live, you'll see: `https://ml-evaluator-backend-XXXX.onrender.com`
+(Save this URL)
+
+### STEP 5: Connect Vercel (2 minutes)
+1. Go to: https://vercel.com/dashboard
+2. Select: ml-evaluator
+3. Settings → Environment Variables
+4. Add: `VITE_API_URL` = `https://ml-evaluator-backend-XXXX.onrender.com`
+5. Vercel auto-redeploys
+
+### STEP 6: Test (2 minutes)
+1. Open: https://ml-evaluator.vercel.app
+2. Upload candidates.csv + rubric.txt
+3. Click Evaluate
+4. See results = ✨ SUCCESS!
 5. Tests everything
 
 ---
