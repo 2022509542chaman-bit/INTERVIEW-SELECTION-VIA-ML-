@@ -5,11 +5,6 @@
   "env": {
     "VITE_API_URL": ""
   },
-  "functions": {
-    "api.py": {
-      "runtime": "python3.11"
-    }
-  },
   "rewrites": [
     {
       "source": "/evaluate",
@@ -25,5 +20,6 @@
     }
   ]
 }
+
 
 
