@@ -234,8 +234,6 @@ def sigmoid(x):
 
 
 def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=0.60):
-    if bi_encoder is None:
-        raise RuntimeError("Bi-encoder model failed to load.")
     t_start = time.time()
 
     criteria = parse_rubric_criteria(rubric_text)
