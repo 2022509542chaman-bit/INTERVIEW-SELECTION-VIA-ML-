@@ -1,17 +1,19 @@
-"""Simplified ML Evaluator API for Vercel serverless"""
+"""Ultra-minimal ML Evaluator API for Vercel serverless"""
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
+import json
 import sys
 from pathlib import Path
+from typing import Optional
 
-# Add backend to path
-backend_path = Path(__file__).parent.parent / "ml-evaluator" / "backend"
-sys.path.insert(0, str(backend_path))
+# Minimal FastAPI import
+try:
+    from fastapi import FastAPI, UploadFile, File, HTTPException
+    from fastapi.middleware.cors import CORSMiddleware
+except Exception as e:
+    print(f"FastAPI import error: {e}")
+    raise
 
-app = FastAPI(title="ML Evaluator API")
+app = FastAPI(title="ML Evaluator API", docs_url=None, openapi_url=None)
 
 # Enable CORS
 app.add_middleware(
@@ -28,18 +30,16 @@ _engine = None
 def get_engine():
     global _engine
     if _engine is None:
-        from ml_engine import process_evaluation_request
-        _engine = process_evaluation_request
+        try:
+            backend_path = Path(__file__).parent.parent / "ml-evaluator" / "backend"
+            sys.path.insert(0, str(backend_path))
+            from ml_engine import process_evaluation_request
+            _engine = process_evaluation_request
+            print("✓ ML engine loaded")
+        except Exception as e:
+            print(f"ML engine load error: {e}")
+            raise
     return _engine
-
-
-# Simple response model
-class EvaluationResponse(BaseModel):
-    status: str
-    data: list
-    summary: dict
-    eval_time_seconds: float
-    batch_id: int = 0
 
 
 @app.get("/health")
@@ -53,23 +53,35 @@ async def evaluate_candidates(
     candidates_file: UploadFile = File(...),
     rubric_file: UploadFile = File(...),
 ):
-    """Evaluate candidates - simplified endpoint for Vercel."""
+    """Evaluate candidates."""
+    error_details = []
+    
     try:
-        # Validate files
-        if not candidates_file or not rubric_file:
-            raise HTTPException(status_code=400, detail="Both candidates_file and rubric_file are required")
-        
         # Read files
-        candidates_bytes = await candidates_file.read()
-        rubric_bytes = await rubric_file.read()
+        try:
+            cand_bytes = await candidates_file.read()
+            error_details.append(f"candidates_file: {len(cand_bytes)} bytes read")
+        except Exception as e:
+            error_details.append(f"Error reading candidates_file: {str(e)}")
+            raise
         
-        if not candidates_bytes or not rubric_bytes:
+        try:
+            rubric_bytes = await rubric_file.read()
+            error_details.append(f"rubric_file: {len(rubric_bytes)} bytes read")
+        except Exception as e:
+            error_details.append(f"Error reading rubric_file: {str(e)}")
+            raise
+        
+        # Validate not empty
+        if not cand_bytes or not rubric_bytes:
             raise HTTPException(status_code=400, detail="Files cannot be empty")
         
-        # Process evaluation
+        # Get engine
         engine = get_engine()
+        
+        # Process
         result = engine(
-            candidates_bytes,
+            cand_bytes,
             rubric_bytes,
             candidates_file.filename or "candidates"
         )
@@ -84,5 +96,9 @@ async def evaluate_candidates(
         raise
     except Exception as e:
         import traceback
-        print(f"Error: {str(e)}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Evaluation failed: {str(e)}")
+        trace = traceback.format_exc()
+        print(f"ERROR: {str(e)}")
+        print(trace)
+        error_msg = f"Failed: {str(e)}. Debug: {'; '.join(error_details)}"
+        raise HTTPException(status_code=500, detail=error_msg)
+
