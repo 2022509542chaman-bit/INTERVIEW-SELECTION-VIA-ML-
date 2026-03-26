@@ -34,11 +34,15 @@ try:
             _engine = process_evaluation_request
         return _engine
     
+    # Handle both /health and /api/health
     @app.get("/health")
+    @app.get("/api/health")
     async def health():
         return {"status": "ok"}
     
+    # Handle both /evaluate and /api/evaluate
     @app.post("/evaluate")
+    @app.post("/api/evaluate")
     async def evaluate_candidates(
         candidates_file: UploadFile = File(...),
         rubric_file: UploadFile = File(...),
@@ -71,6 +75,7 @@ except Exception as e:
     raise
 
 __all__ = ["app"]
+
 
 
 
