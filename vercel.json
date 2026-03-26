@@ -11,15 +11,11 @@
   },
   "routes": [
     {
-      "src": "/evaluate",
+      "src": "/api/(.*)",
       "dest": "api/index.py"
     },
     {
-      "src": "/health",
-      "dest": "api/index.py"
-    },
-    {
-      "src": "^/.*",
+      "src": "/(.*)",
       "dest": "/index.html"
     }
   ]

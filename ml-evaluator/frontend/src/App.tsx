@@ -101,7 +101,9 @@ function App() {
 
     try {
       const apiBase = import.meta.env.VITE_API_URL || '';
-      const response = await fetch(`${apiBase}/evaluate`, {
+      // Route to /api/evaluate for Vercel serverless or external API
+      const endpoint = apiBase ? `${apiBase}/evaluate` : '/api/evaluate';
+      const response = await fetch(endpoint, {
         method: "POST",
         body: formData,
       });
@@ -109,7 +111,7 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || "Failed to evaluate candidates");
+        throw new Error(data.detail || data.error || "Failed to evaluate candidates");
       }
 
       setResults(data.data);
