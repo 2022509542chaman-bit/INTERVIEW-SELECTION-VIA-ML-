@@ -72,6 +72,11 @@ async def evaluate(candidates_file: UploadFile = File(...), rubric_file: UploadF
 async def root():
     return {"message": "ML Evaluator API"}
 
-# Required for Vercel
-handler = app
+# Required for Vercel - ASGI handler via Mangum
+try:
+    from mangum import Mangum
+    handler = Mangum(app)
+except ImportError:
+    # Fallback - direct app reference
+    handler = app
 
