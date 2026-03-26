@@ -3,25 +3,32 @@ import numpy as np
 import io
 import re
 import time
+import os
 from concurrent.futures import ThreadPoolExecutor
 from sentence_transformers import SentenceTransformer, CrossEncoder, util
 
-# --- Model Configuration ---
-BI_ENCODER_MODEL = 'all-MiniLM-L6-v2'
-CROSS_ENCODER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+# --- Model Configuration (VERCEL OPTIMIZED - Small Models Only) ---
+# Using MiniLM v2 (33MB) instead of larger models
+BI_ENCODER_MODEL = 'all-MiniLM-L6-v2'  # 33MB only
+CROSS_ENCODER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-6-v2'  # 25MB only
 CROSS_ENCODER_PAIR_LIMIT = 500
+
+# Cache models in /tmp for Vercel (reused across requests)
+MODELS_CACHE_DIR = os.environ.get('MODELS_CACHE_DIR', '/tmp/sentence-transformers')
+os.makedirs(MODELS_CACHE_DIR, exist_ok=True)
 
 device = 'cpu'
 bi_encoder = None
 cross_encoder = None
 
 def _load_bi_encoder():
-    """Lazy load bi-encoder on first use."""
+    """Lazy load bi-encoder on first use (downloads only if needed)."""
     global bi_encoder
     if bi_encoder is None:
         try:
             print(f"[1/2] Loading Bi-Encoder: {BI_ENCODER_MODEL}")
-            bi_encoder = SentenceTransformer(BI_ENCODER_MODEL, device=device)
+            # Download models to cache directory for persistence
+            bi_encoder = SentenceTransformer(BI_ENCODER_MODEL, device=device, cache_folder=MODELS_CACHE_DIR)
             bi_encoder.encode(["warm-up"], normalize_embeddings=True, show_progress_bar=False)
             print("      Bi-Encoder ready (warmed)")
         except Exception as e:
@@ -30,7 +37,7 @@ def _load_bi_encoder():
     return bi_encoder
 
 def _load_cross_encoder():
-    """Lazy load cross-encoder on first use."""
+    """Lazy load cross-encoder on first use (downloads only if needed)."""
     global cross_encoder
     if cross_encoder is None:
         try:

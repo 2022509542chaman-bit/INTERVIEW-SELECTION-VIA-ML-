@@ -1,0 +1,97 @@
+═══════════════════════════════════════════════════════════════════════════
+         📋 RENDER DEPLOYMENT - EXACT FIELDS TO FILL IN
+═══════════════════════════════════════════════════════════════════════════
+
+🔴 STEP 1: Click "New +" → Select "Web Service"
+───────────────────────────────────────────────────────────────────────────
+
+🔴 STEP 2: CONNECT GITHUB (Authorization Screen)
+───────────────────────────────────────────────────────────────────────────
+- Click "Connect GitHub" or "Authorize with GitHub"
+- If asked for permissions, click "Authorize"
+- Select your GitHub account
+
+🔴 STEP 3: SELECT REPOSITORY
+───────────────────────────────────────────────────────────────────────────
+
+REPOSITORY NAME:
+  👉 2022509542chaman-bit/INTERVIEW-SELECTION-VIA-ML-
+  
+(Copy exactly as shown above - it's your GitHub username/repo)
+
+BRANCH:
+  👉 main
+
+🔴 STEP 4: FILL IN SERVICE DETAILS
+───────────────────────────────────────────────────────────────────────────
+
+NAME:
+  👉 ml-evaluator-backend
+
+ENVIRONMENT:
+  👉 Docker
+
+ROOT DIRECTORY:
+  👉 (leave blank or empty)
+
+BUILD COMMAND:
+  👉 (leave blank - Docker handles it)
+
+START COMMAND:
+  👉 (leave blank - Docker handles it)
+
+PLAN:
+  👉 Free (or select "Free Tier")
+
+🔴 STEP 5: ENVIRONMENT VARIABLES (if shown)
+───────────────────────────────────────────────────────────────────────────
+
+KEY:
+  👉 PORT
+
+VALUE:
+  👉 8000
+
+(If no environment section appears, don't worry - render.yaml has this)
+
+🔴 STEP 6: DEPLOY
+───────────────────────────────────────────────────────────────────────────
+- Scroll down
+- Click "Deploy" button
+- Wait 10-15 minutes for build to complete
+- Status will change from "Building..." → "Live"
+
+═══════════════════════════════════════════════════════════════════════════
+
+✅ AFTER DEPLOYMENT GOES LIVE:
+───────────────────────────────────────────────────────────────────────────
+
+1. Copy the URL that appears (like: https://ml-evaluator-backend-XXXX.onrender.com)
+
+2. Go to: https://vercel.com/dashboard
+
+3. Select project: ml-evaluator
+
+4. Click: Settings → Environment Variables
+
+5. Add new variable:
+   NAME: VITE_API_URL
+   VALUE: (paste your Render URL from step 1)
+
+6. Vercel auto-redeploys
+
+7. Done! ✨
+
+═══════════════════════════════════════════════════════════════════════════
+
+🎯 SUMMARY OF KEY VALUES:
+───────────────────────────────────────────────────────────────────────────
+
+Repository:     2022509542chaman-bit/INTERVIEW-SELECTION-VIA-ML-
+Branch:         main
+Name:           ml-evaluator-backend
+Environment:    Docker
+Plan:           Free
+PORT:           8000
+
+═══════════════════════════════════════════════════════════════════════════
