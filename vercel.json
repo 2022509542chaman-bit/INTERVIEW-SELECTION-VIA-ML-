@@ -7,19 +7,12 @@
   },
   "rewrites": [
     {
-      "source": "/evaluate",
-      "destination": "/api"
-    },
-    {
-      "source": "/health",
-      "destination": "/api"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
 }
+
 
 
 
