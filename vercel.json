@@ -5,18 +5,19 @@
   "env": {
     "VITE_API_URL": ""
   },
+  "functions": {
+    "api.py": {
+      "runtime": "python3.9"
+    }
+  },
   "rewrites": [
     {
       "source": "/evaluate",
-      "destination": "/api/index.py"
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/index.py"
+      "destination": "/api"
     },
     {
       "source": "/health",
-      "destination": "/api/index.py"
+      "destination": "/api"
     },
     {
       "source": "/(.*)",
@@ -24,4 +25,5 @@
     }
   ]
 }
+
 
