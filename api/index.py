@@ -1,30 +1,13 @@
-"""
-Vercel Serverless Backend using FastAPI
-"""
-
 import os
 import sys
-from typing import Optional
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
 
 # Add backend to path
 backend_path = os.path.join(os.path.dirname(__file__), '..', 'ml-evaluator', 'backend')
 if backend_path not in sys.path:
     sys.path.insert(0, backend_path)
-
-from fastapi import FastAPI, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-
-app = FastAPI()
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 _ml_engine = None
 
@@ -40,20 +23,23 @@ def get_ml_engine():
             raise
     return _ml_engine
 
-@app.get("/api/health")
-@app.get("/health")
-async def health():
-    return {"status": "ok", "service": "ml-evaluator-api"}
+@app.route('/api/health', methods=['GET'])
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok", "service": "ml-evaluator-api"})
 
-@app.post("/api/evaluate")
-@app.post("/evaluate")
-async def evaluate(candidates_file: UploadFile = File(...), rubric_file: UploadFile = File(...)):
+@app.route('/api/evaluate', methods=['POST'])
+@app.route('/evaluate', methods=['POST'])
+def evaluate():
     try:
-        candidates_data = await candidates_file.read()
-        rubric_data = await rubric_file.read()
+        if 'candidates_file' not in request.files or 'rubric_file' not in request.files:
+            return jsonify({"error": "Missing files"}), 400
         
-        candidates_text = candidates_data.decode('utf-8')
-        rubric_text = rubric_data.decode('utf-8')
+        candidates_file = request.files['candidates_file']
+        rubric_file = request.files['rubric_file']
+        
+        candidates_text = candidates_file.read().decode('utf-8')
+        rubric_text = rubric_file.read().decode('utf-8')
         
         ml_engine = get_ml_engine()
         results = ml_engine(
@@ -61,22 +47,18 @@ async def evaluate(candidates_file: UploadFile = File(...), rubric_file: UploadF
             rubric_text=rubric_text
         )
         
-        return JSONResponse(results)
+        return jsonify(results)
         
     except Exception as e:
         print(f"Error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=400)
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
-@app.get("/")
-@app.get("/api")
-async def root():
-    return {"message": "ML Evaluator API"}
+@app.route('/')
+@app.route('/api')
+def root():
+    return jsonify({"message": "ML Evaluator API"})
 
-# Required for Vercel - ASGI handler via Mangum
-try:
-    from mangum import Mangum
-    handler = Mangum(app)
-except ImportError:
-    # Fallback - direct app reference
-    handler = app
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 8000)))
 
