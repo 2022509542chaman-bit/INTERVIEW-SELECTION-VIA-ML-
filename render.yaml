@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: ml-evaluator-backend
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    dockerfilePath: Dockerfile
+    envVars:
+      - key: PORT
+        value: 8000
