@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Upload, FileType, CheckCircle, XCircle, AlertTriangle, FileText, ChevronRight, ChevronDown, Sparkles } from 'lucide-react'
 import { SpiralAnimation } from '@/components/ui/spiral-animation'
+import { ExportModal } from '@/components/ExportModal'
 
 interface PointScore {
   rubric_point: string;
@@ -70,6 +71,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [evalTime, setEvalTime] = useState<number | null>(null);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   // Show enter button after a delay
   useEffect(() => {
@@ -122,6 +124,46 @@ function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleExportCSV = () => {
+    const sorted = [...results].sort((a, b) => a.rank - b.rank);
+    const esc = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
+    const starStr = (n: number) => '★'.repeat(n || 0) + '☆'.repeat(5 - (n || 0));
+    const decIcon = (d: string) => d === 'Hire' ? '✅ HIRE' : d === 'Borderline' ? '⚠️ BORDERLINE' : '❌ REJECT';
+    const now = new Date();
+    const L: string[] = [];
+    const row = (cols: string[]) => L.push(cols.map(c => esc(c)).join(','));
+    const blank = () => L.push('');
+    const divider = (cols: number) => L.push(Array(cols).fill(esc('─────────────────')).join(','));
+
+    row(['ML CANDIDATE EVALUATION REPORT', '', '', '', '', '']);
+    blank();
+    row(['Report Generated:', now.toLocaleString(), '', '', '', '']);
+    blank();
+    divider(6);
+    blank();
+
+    row(['RANKING OVERVIEW', '', '', '', '', '']);
+    blank();
+    row(['Rank', 'Candidate', 'Score', 'Decision', 'Grade', 'Stars']);
+    divider(6);
+    sorted.forEach(r => {
+      row([`#${r.rank}`, r.name, `${r.score.toFixed(1)}%`, decIcon(r.decision), r.grade || 'N/A', starStr(r.star_rating)]);
+    });
+    blank();
+
+    const bom = '\uFEFF';
+    const csv = bom + L.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ML_Evaluation_Report_${now.toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // ── LANDING PAGE (Spiral Animation) ──────────────────────────────────
@@ -348,241 +390,10 @@ function App() {
               <div className="px-6 py-5 border-b border-slate-800 flex justify-between items-center">
                 <h3 className="text-lg font-bold text-white">Candidate Breakdown</h3>
                 <button
-                  onClick={() => {
-                    const sorted = [...results].sort((a, b) => a.rank - b.rank);
-                    const esc = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
-                    const starStr = (n: number) => '★'.repeat(n || 0) + '☆'.repeat(5 - (n || 0));
-                    const decIcon = (d: string) => d === 'Hire' ? '✅ HIRE' : d === 'Borderline' ? '⚠️ BORDERLINE' : '❌ REJECT';
-                    const rubricPts = sorted[0]?.point_scores?.map(p => p.rubric_point) || [];
-                    const now = new Date();
-                    const dateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-                    const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-                    const L: string[] = [];
-                    const row = (cols: string[]) => L.push(cols.map(c => esc(c)).join(','));
-                    const blank = () => L.push('');
-                    const divider = (cols: number) => L.push(Array(cols).fill(esc('─────────────────')).join(','));
-                    const avgScore = sorted.length ? (sorted.reduce((a, r) => a + r.score, 0) / sorted.length) : 0;
-                    const hireRate = sorted.length ? ((summary.hired / sorted.length) * 100) : 0;
-
-                    // ═══ SECTION 1: REPORT COVER ═══
-                    row(['ML CANDIDATE EVALUATION REPORT', '', '', '', '', '']);
-                    blank();
-                    row(['Report Generated:', dateStr + ' at ' + timeStr, '', '', '', '']);
-                    row(['Assessment Engine:', 'ML Evaluator AI — Bi-Encoder + Cross-Encoder + NLP', '', '', '', '']);
-                    row(['Evaluation Time:', `${evalTime?.toFixed(1) ?? '?'}s`, '', '', '', '']);
-                    blank();
-                    divider(6);
-                    blank();
-
-                    // ═══ SECTION 2: EXECUTIVE SUMMARY ═══
-                    row(['EXECUTIVE SUMMARY', '', '', '', '', '']);
-                    blank();
-                    row(['Metric', 'Value', '', '', '', '']);
-                    divider(6);
-                    row(['Total Candidates Evaluated', String(summary.total), '', '', '', '']);
-                    row(['Recommended for Hire', `${summary.hired} candidate(s)`, '', '', '', '']);
-                    row(['Borderline / Further Review', `${summary.borderline} candidate(s)`, '', '', '', '']);
-                    row(['Not Recommended', `${summary.rejected} candidate(s)`, '', '', '', '']);
-                    row(['Average Score', `${avgScore.toFixed(1)}%`, '', '', '', '']);
-                    row(['Hire Rate', `${hireRate.toFixed(0)}%`, '', '', '', '']);
-                    blank();
-                    divider(6);
-                    blank();
-
-                    // ═══ SECTION 3: RANKING OVERVIEW ═══
-                    row(['RANKING OVERVIEW', '', '', '', '', '']);
-                    blank();
-                    row(['Rank', 'Candidate', 'Grade', 'Stars', 'Score', 'Decision']);
-                    divider(6);
-                    sorted.forEach(r => {
-                      row([
-                        `#${r.rank}`,
-                        r.name,
-                        r.grade || 'N/A',
-                        starStr(r.star_rating),
-                        `${r.score.toFixed(1)}%`,
-                        decIcon(r.decision)
-                      ]);
-                    });
-                    blank();
-                    divider(6);
-                    blank();
-
-                    // ═══ SECTION 4: DETAILED SCORECARD ═══
-                    row(['DETAILED PERFORMANCE SCORECARD', '', '', '', '', '']);
-                    blank();
-                    row([
-                      'Rank', 'Candidate', 'Score', 'Decision', 'Coverage', 'Keyword Match',
-                      'Consistency', 'Confidence', 'Percentile',
-                      'Must-Have Pass', 'Criteria Passed', 'Tech Breadth',
-                      'Tech Depth', 'Response Depth', 'Experience Level'
-                    ].map(h => h).join('","').replace(/^/, '"').replace(/$/, '"'));
-                    // Fix: use raw push for this wide header
-                    L.pop(); // remove bad line
-                    L.push([
-                      'Rank', 'Candidate', 'Score', 'Decision', 'Coverage', 'Keyword Match',
-                      'Consistency', 'Confidence', 'Percentile',
-                      'Must-Have Pass', 'Criteria Passed', 'Tech Breadth',
-                      'Tech Depth', 'Response Depth', 'Experience Level'
-                    ].map(h => esc(h)).join(','));
-                    divider(15);
-                    sorted.forEach(r => {
-                      L.push([
-                        esc(`#${r.rank}`), esc(r.name), esc(`${r.score.toFixed(1)}%`),
-                        esc(decIcon(r.decision)), esc(`${r.coverage ?? 0}%`),
-                        esc(`${r.keyword_match_rate ?? 0}%`), esc(`${r.consistency_score ?? 0}%`),
-                        esc(`${r.confidence ?? 0}%`), esc(`${r.percentile ?? 0}%`),
-                        esc(`${r.must_have_pass_rate ?? 0}%`),
-                        esc(`${r.criteria_passed ?? 0}/${r.criteria_total ?? 0}`),
-                        esc(`${r.technical_breadth ?? 0} skills`),
-                        esc(`${r.technical_depth_score ?? 0}%`),
-                        esc(`${r.response_depth ?? 0}%`),
-                        esc(r.experience_level ?? 'Unknown')
-                      ].join(','));
-                    });
-                    blank();
-                    divider(15);
-                    blank();
-
-                    // ═══ SECTION 5: INDIVIDUAL CANDIDATE PROFILES ═══
-                    row(['INDIVIDUAL CANDIDATE PROFILES', '', '', '', '', '']);
-                    sorted.forEach(r => {
-                      blank();
-                      divider(6);
-                      row([`CANDIDATE: ${r.name}`, '', '', '', '', '']);
-                      divider(6);
-                      row(['Field', 'Details', '', '', '', '']);
-                      row(['Rank', `#${r.rank} of ${sorted.length}`, '', '', '', '']);
-                      row(['Grade', `${r.grade || 'N/A'} ${starStr(r.star_rating)}`, '', '', '', '']);
-                      row(['Decision', decIcon(r.decision), '', '', '', '']);
-                      row(['Overall Score', `${r.score.toFixed(1)}%`, '', '', '', '']);
-                      row(['Percentile', `${r.percentile ?? 0}%`, '', '', '', '']);
-                      row(['Confidence Level', `${r.confidence ?? 0}%`, '', '', '', '']);
-                      row(['Experience Level', `${r.experience_level ?? 'Unknown'} (confidence: ${((r.experience_confidence ?? 0) * 100).toFixed(0)}%)`, '', '', '', '']);
-                      blank();
-                      row(['', 'SCORING BREAKDOWN', '', '', '', '']);
-                      row(['Rubric Coverage', `${r.coverage ?? 0}%`, '', '', '', '']);
-                      row(['Keyword Match Rate', `${r.keyword_match_rate ?? 0}%`, '', '', '', '']);
-                      row(['Consistency Score', `${r.consistency_score ?? 0}%`, '', '', '', '']);
-                      row(['Must-Have Criteria Pass', `${r.must_have_pass_rate ?? 0}%`, '', '', '', '']);
-                      row(['Criteria Passed', `${r.criteria_passed ?? 0} out of ${r.criteria_total ?? 0}`, '', '', '', '']);
-                      row(['Technical Breadth', `${r.technical_breadth ?? 0} distinct skills identified`, '', '', '', '']);
-                      row(['Technical Depth', `${r.technical_depth_score ?? 0}%`, '', '', '', '']);
-                      row(['Response Depth', `${r.response_depth ?? 0}%`, '', '', '', '']);
-                      blank();
-                      row(['', 'ASSESSMENT', '', '', '', '']);
-                      r.reason?.split('\n').forEach(line => {
-                        if (line.trim()) row(['', line.trim(), '', '', '', '']);
-                      });
-                      blank();
-                      row(['', 'RECOMMENDATION', '', '', '', '']);
-                      row(['', r.recommendation || 'N/A', '', '', '', '']);
-                      blank();
-                      row(['', 'STRENGTHS', '', '', '', '']);
-                      if (r.strengths?.length) {
-                        r.strengths.forEach(s => row(['', `  ✓ ${s}`, '', '', '', '']));
-                      } else {
-                        row(['', '  No notable strengths identified', '', '', '', '']);
-                      }
-                      blank();
-                      row(['', 'AREAS OF CONCERN', '', '', '', '']);
-                      if (r.weaknesses?.length || r.gaps?.length) {
-                        [...(r.weaknesses || []), ...(r.gaps || [])].forEach(w => row(['', `  ✗ ${w}`, '', '', '', '']));
-                      } else {
-                        row(['', '  No significant concerns', '', '', '', '']);
-                      }
-                      blank();
-                      row(['', 'SKILLS DETECTED', '', '', '', '']);
-                      row(['', r.matched_keywords?.join(', ') || 'None', '', '', '', '']);
-                      row(['', 'MISSING SKILLS', '', '', '', '']);
-                      row(['', r.missing_keywords?.join(', ') || 'None — all key skills detected', '', '', '', '']);
-
-                      // Borderline extras
-                      if (r.decision === 'Borderline' && r.borderline_analysis) {
-                        blank();
-                        row(['', 'BORDERLINE ANALYSIS', '', '', '', '']);
-                        row(['', `Proximity to Hire: ${r.borderline_analysis.proximity_to_hire}%`, '', '', '', '']);
-                        row(['', `Gap: ${r.borderline_analysis.gap_percentage}%`, '', '', '', '']);
-                        row(['', r.borderline_analysis.verdict, '', '', '', '']);
-                        if (r.borderline_analysis.interview_questions?.length) {
-                          blank();
-                          row(['', 'SUGGESTED INTERVIEW QUESTIONS', '', '', '', '']);
-                          r.borderline_analysis.interview_questions.forEach((q, i) => row(['', `  ${i+1}. ${q}`, '', '', '', '']));
-                        }
-                      }
-                    });
-                    blank();
-                    divider(6);
-                    blank();
-
-                    // ═══ SECTION 6: RUBRIC SCORECARD MATRIX ═══
-                    if (rubricPts.length > 0) {
-                      row(['RUBRIC SCORECARD MATRIX', '', '', '', '', '']);
-                      blank();
-                      L.push([esc('Rubric Criteria'), ...sorted.map(r => esc(r.name))].join(','));
-                      divider(sorted.length + 1);
-                      rubricPts.forEach((rp, ri) => {
-                        const scores = sorted.map(r => {
-                          const pt = r.point_scores?.[ri];
-                          if (!pt) return 'N/A';
-                          return `${(pt.score * 100).toFixed(0)}% ${pt.passed ? '✓' : '✗'}`;
-                        });
-                        L.push([esc(rp), ...scores.map(s => esc(s))].join(','));
-                      });
-                      blank();
-                      divider(sorted.length + 1);
-                      blank();
-                    }
-
-                    // ═══ SECTION 7: SKILLS COMPARISON ═══
-                    row(['SKILLS COMPARISON MATRIX', '', '', '', '', '']);
-                    blank();
-                    const allSkills = new Set<string>();
-                    sorted.forEach(r => r.matched_keywords?.forEach(k => allSkills.add(k)));
-                    if (allSkills.size > 0) {
-                      L.push([esc('Skill'), ...sorted.map(r => esc(r.name))].join(','));
-                      divider(sorted.length + 1);
-                      [...allSkills].sort().forEach(skill => {
-                        const has = sorted.map(r => r.matched_keywords?.includes(skill) ? '✓ Yes' : '✗ No');
-                        L.push([esc(skill), ...has.map(h => esc(h))].join(','));
-                      });
-                      blank();
-                      divider(sorted.length + 1);
-                      blank();
-                    }
-
-                    // ═══ SECTION 8: METHODOLOGY ═══
-                    row(['METHODOLOGY & NOTES', '', '', '', '', '']);
-                    blank();
-                    row(['This report was generated using a multi-model ML evaluation pipeline:', '', '', '', '', '']);
-                    row(['1. Bi-Encoder (all-MiniLM-L6-v2) for semantic similarity scoring', '', '', '', '', '']);
-                    row(['2. Cross-Encoder (ms-marco-MiniLM-L-6-v2) for precise relevance ranking', '', '', '', '', '']);
-                    row(['3. NLP-based keyword extraction and technical skills matching', '', '', '', '', '']);
-                    row(['4. Multi-gate decision framework with configurable thresholds', '', '', '', '', '']);
-                    blank();
-                    row(['Scores reflect alignment between candidate responses and the provided rubric.', '', '', '', '', '']);
-                    row(['Decisions are based on composite scoring across semantic similarity, keyword', '', '', '', '', '']);
-                    row(['coverage, consistency, and domain-specific technical depth analysis.', '', '', '', '', '']);
-                    blank();
-                    row(['━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', '', '', '', '', '']);
-                    row(['ML Candidate Evaluator AI — Confidential Assessment Report', '', '', '', '', '']);
-                    row(['━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', '', '', '', '', '']);
-
-                    const bom = '\uFEFF';
-                    const csv = bom + L.join('\n');
-                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `ML_Evaluation_Report_${now.toISOString().slice(0,10)}.csv`;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    URL.revokeObjectURL(url);
-                  }}
+                  onClick={() => setIsExportModalOpen(true)}
                   className="px-4 py-2 bg-blue-600/20 text-blue-400 font-semibold text-sm hover:bg-blue-600/30 transition-colors flex items-center gap-2 rounded-lg border border-blue-500/30"
                 >
-                  📊 Export Full Report
+                  📊 Export Report
                 </button>
               </div>
               <div className="overflow-x-auto">
@@ -835,6 +646,15 @@ function App() {
             </div>
           </section>
         )}
+
+        {/* Export Modal */}
+        <ExportModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          onExportCSV={handleExportCSV}
+          title="Export Evaluation Report"
+          resultsCount={results.length}
+        />
       </main>
     </div>
   );

@@ -11,3 +11,5 @@ scikit-learn>=1.4
 scipy>=1.10
 tokenizers>=0.20
 tqdm>=4.60
+sqlalchemy>=2.0
+alembic>=1.13

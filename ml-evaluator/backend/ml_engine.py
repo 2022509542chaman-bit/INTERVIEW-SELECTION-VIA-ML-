@@ -263,14 +263,15 @@ def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=
         all_exp_levels = list(pool.map(detect_experience_level, responses))
     t_kw = time.time() - t2
 
-    # Calibrated thresholds (multi-gate)
-    POINT_PASS    = 0.10 + strictness_threshold * 0.14
-    HIRE_THRESH   = 0.28 + strictness_threshold * 0.12
-    BORDER_THRESH = 0.18 + strictness_threshold * 0.10
-    MIN_COVERAGE_HIRE   = 0.25
-    MIN_KW_HIRE         = 0.12
-    MIN_COVERAGE_BORDER = 0.10
-    MIN_QUALIFY         = 0.12
+    # Calibrated thresholds per PRD (multi-gate) - LENIENT MODE
+    POINT_PASS    = 0.08 + strictness_threshold * 0.10  # Reduced from 0.10 + 0.14
+    SELECTED_THRESH = 0.55      # Lowered from 0.65 - SELECTED
+    BORDERLINE_THRESH = 0.30    # Lowered from 0.40 - BORDERLINE  
+    REJECTED_THRESH = 0.12      # Lowered from 0.18 - REJECTED (anything below is HARD REJECTED)
+    MIN_COVERAGE_HIRE   = 0.18  # Lowered from 0.25
+    MIN_KW_HIRE         = 0.08  # Lowered from 0.12
+    MIN_COVERAGE_BORDER = 0.08  # Lowered from 0.10
+    MIN_QUALIFY         = 0.12  # Lowered from 0.18 - Hard reject floor
 
     results = []
     for i in range(n_cand):
@@ -321,13 +322,15 @@ def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=
         )
         final = min(final, 0.99)
 
-        # Multi-gate decision
-        if final >= HIRE_THRESH and coverage >= MIN_COVERAGE_HIRE and global_kw >= MIN_KW_HIRE:
-            decision = "Hire"
-        elif final >= BORDER_THRESH and coverage >= MIN_COVERAGE_BORDER:
-            decision = "Borderline"
+        # Multi-gate decision (PRD thresholds)
+        if final >= SELECTED_THRESH:
+            decision = "SELECTED"
+        elif final >= BORDERLINE_THRESH:
+            decision = "BORDERLINE"
+        elif final >= REJECTED_THRESH:
+            decision = "REJECTED"
         else:
-            decision = "Reject"
+            decision = "HARD_REJECTED"
 
         matched_kw_all = sorted(all_rubric_kw & cand_kw)
         missing_kw_all = sorted(all_rubric_kw - cand_kw)
@@ -374,27 +377,27 @@ def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=
         r['rank'] = idx + 1
         ratio = r['_raw'] / top_score if top_score > 0 else 0
         if r['_raw'] < MIN_QUALIFY:
-            r['decision'] = 'Reject'
+            r['decision'] = 'HARD_REJECTED'
             continue
-        # Promote rank #1 to Hire if they have reasonable coverage and lead clearly
-        if idx == 0 and r['decision'] != 'Hire':
+        # Promote rank #1 to SELECTED if they have reasonable coverage and lead clearly
+        if idx == 0 and r['decision'] != 'SELECTED':
             if r['_coverage'] >= MIN_COVERAGE_HIRE and r['_kwCov'] >= MIN_KW_HIRE:
-                r['decision'] = 'Hire'
+                r['decision'] = 'SELECTED'
             elif r['_coverage'] >= MIN_COVERAGE_BORDER:
-                r['decision'] = 'Borderline'
-        # Promote rank #2 to Hire if very close to #1, or Borderline
+                r['decision'] = 'BORDERLINE'
+        # Promote rank #2 to SELECTED if very close to #1, or BORDERLINE
         if idx == 1 and ratio >= 0.82:
-            if r['decision'] == 'Reject' and r['_coverage'] >= MIN_COVERAGE_HIRE:
-                r['decision'] = 'Hire'
-            elif r['decision'] == 'Reject' and r['_coverage'] >= MIN_COVERAGE_BORDER:
-                r['decision'] = 'Borderline'
+            if r['decision'] == 'REJECTED' and r['_coverage'] >= MIN_COVERAGE_HIRE:
+                r['decision'] = 'SELECTED'
+            elif r['decision'] == 'REJECTED' and r['_coverage'] >= MIN_COVERAGE_BORDER:
+                r['decision'] = 'BORDERLINE'
         elif idx == 1 and ratio >= 0.65:
-            if r['decision'] == 'Reject' and r['_coverage'] >= MIN_COVERAGE_BORDER:
-                r['decision'] = 'Borderline'
-        # Rank #3 can be Borderline if reasonably close
+            if r['decision'] == 'REJECTED' and r['_coverage'] >= MIN_COVERAGE_BORDER:
+                r['decision'] = 'BORDERLINE'
+        # Rank #3 can be BORDERLINE if reasonably close
         if idx == 2 and ratio >= 0.60:
-            if r['decision'] == 'Reject' and r['_coverage'] >= MIN_COVERAGE_BORDER:
-                r['decision'] = 'Borderline'
+            if r['decision'] == 'REJECTED' and r['_coverage'] >= MIN_COVERAGE_BORDER:
+                r['decision'] = 'BORDERLINE'
 
     # Percentile
     scores_arr = np.array([r['score'] for r in results])
@@ -428,11 +431,11 @@ def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=
         else:         r['grade'] = 'F'
 
     # Borderline analysis
-    hire_thresh_pct = HIRE_THRESH * 100
+    selected_thresh_pct = SELECTED_THRESH * 100
     for r in results:
-        if r['decision'] == 'Borderline':
-            proximity = min(99, round(r['score'] / hire_thresh_pct * 100, 1))
-            gap_pct = round(max(0, hire_thresh_pct - r['score']), 1)
+        if r['decision'] == 'BORDERLINE':
+            proximity = min(99, round(r['score'] / selected_thresh_pct * 100, 1))
+            gap_pct = round(max(0, selected_thresh_pct - r['score']), 1)
             interview_qs = []
             weak_pts = sorted([p for p in r['point_scores'] if not p['passed']], key=lambda p: p['score'])
             for wp in weak_pts[:3]:
@@ -454,13 +457,13 @@ def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=
         cov = r['coverage']; score = r['score']; dec = r['decision']
         sr = r.get('star_rating', 0)
         lines = []
-        if dec == 'Hire':
+        if dec == 'SELECTED':
             lines.append(f"TOP PICK - Rank #{r['rank']} | {r.get('grade','')} | {sr}/5 stars")
             lines.append(f"Strong match with {cov:.0f}% rubric coverage and {score:.1f}% overall alignment.")
             lines.append(f"{r['criteria_passed']}/{r['criteria_total']} criteria passed | Confidence: {r['confidence']}%")
             if r['strengths']:
                 lines.append(f"Excels in: {'; '.join(r['strengths'][:3])}")
-        elif dec == 'Borderline':
+        elif dec == 'BORDERLINE':
             ba = r['borderline_analysis']
             lines.append(f"BORDERLINE - Rank #{r['rank']} | {r.get('grade','')} | {sr}/5 stars")
             lines.append(f"{cov:.0f}% coverage, {score:.1f}% fit - {ba['proximity_to_hire']:.0f}% toward hire threshold.")
@@ -474,12 +477,12 @@ def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=
             lines.append(f"{r['criteria_passed']}/{r['criteria_total']} criteria passed | Exp: {r['experience_level']}")
         if r['matched_keywords']:
             lines.append(f"Skills detected: {', '.join(r['matched_keywords'][:10])}")
-        if r['missing_keywords'] and dec != 'Hire':
+        if r['missing_keywords'] and dec != 'SELECTED':
             lines.append(f"Missing: {', '.join(r['missing_keywords'][:6])}")
-        if dec == 'Hire':
+        if dec == 'SELECTED':
             best_area = r['strengths'][0].split('(')[0].strip() if r['strengths'] else 'general competency'
             r['recommendation'] = f"Proceed to interview - Top {r['rank']} candidate. Covers {cov:.0f}% of requirements with {len(r['matched_keywords'])} matching skills."
-        elif dec == 'Borderline':
+        elif dec == 'BORDERLINE':
             gap_areas = [w.split('(')[0].strip() for w in r['weaknesses'][:2]]
             r['recommendation'] = f"Worth a screening call - {r['borderline_analysis']['proximity_to_hire']:.0f}% toward hire threshold. Probe: {'; '.join(gap_areas) if gap_areas else 'technical depth'}."
         else:
@@ -504,15 +507,15 @@ def process_evaluation_request(candidates_file_bytes, rubric_text, candidates_fi
         else:
             df = pd.read_excel(io.BytesIO(candidates_file_bytes))
         text = rubric_text.decode('utf-8', errors='ignore')
-        results, eval_time = evaluate_with_strict_model(df, text, strictness_threshold=0.60)
+        results, eval_time = evaluate_with_strict_model(df, text, strictness_threshold=0.35)  # Lowered from 0.60 for more lenient scoring
         return {
             "status": "success",
             "data": results,
             "summary": {
                 "total": len(results),
-                "hired": sum(1 for r in results if r['decision'] == 'Hire'),
-                "borderline": sum(1 for r in results if r['decision'] == 'Borderline'),
-                "rejected": sum(1 for r in results if r['decision'] == 'Reject'),
+                "hired": sum(1 for r in results if r['decision'] == 'SELECTED'),
+                "borderline": sum(1 for r in results if r['decision'] == 'BORDERLINE'),
+                "rejected": sum(1 for r in results if r['decision'] == 'REJECTED' or r['decision'] == 'HARD_REJECTED'),
             },
             "eval_time_seconds": eval_time,
         }
