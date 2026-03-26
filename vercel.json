@@ -2,20 +2,14 @@
   "version": 2,
   "buildCommand": "cd ml-evaluator/frontend && npm install && npm run build",
   "outputDirectory": "ml-evaluator/frontend/dist",
-  "env": {
-    "VITE_API_URL": ""
-  },
   "routes": [
-    {
-      "src": "^/api(/.*)?$",
-      "dest": "/api/index.py"
-    },
     {
       "src": "^/.*",
       "dest": "/index.html"
     }
   ]
 }
+
 
 
 
