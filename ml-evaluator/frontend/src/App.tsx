@@ -129,7 +129,7 @@ function App() {
   const handleExportCSV = () => {
     const sorted = [...results].sort((a, b) => a.rank - b.rank);
     const esc = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
-    const starStr = (n: number) => '★'.repeat(n || 0) + '☆'.repeat(5 - (n || 0));
+    const starStr = (n: number | undefined) => '★'.repeat(n || 0) + '☆'.repeat(5 - (n || 0));
     const decIcon = (d: string) => d === 'Hire' ? '✅ HIRE' : d === 'Borderline' ? '⚠️ BORDERLINE' : '❌ REJECT';
     const now = new Date();
     const L: string[] = [];
