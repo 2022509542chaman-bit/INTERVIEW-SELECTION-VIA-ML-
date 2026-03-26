@@ -1,20 +1,23 @@
 """
 Vercel Serverless Backend using FastAPI
-Handles /api/* routes for ML evaluation
 """
 
 import os
 import sys
+from typing import Optional
+
+# Add backend to path
+backend_path = os.path.join(os.path.dirname(__file__), '..', 'ml-evaluator', 'backend')
+if backend_path not in sys.path:
+    sys.path.insert(0, backend_path)
+
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# Add backend to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'ml-evaluator', 'backend'))
-
 app = FastAPI()
 
-# CORS middleware
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,7 +26,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Lazy ML engine loading
 _ml_engine = None
 
 def get_ml_engine():
@@ -32,35 +34,28 @@ def get_ml_engine():
         try:
             from ml_engine import process_evaluation_request
             _ml_engine = process_evaluation_request
-            print("✓ ML Engine loaded successfully")
+            print("✓ ML Engine loaded")
         except Exception as e:
-            print(f"✗ ML Engine load failed: {e}")
+            print(f"✗ ML Engine error: {e}")
             raise
     return _ml_engine
 
 @app.get("/api/health")
+@app.get("/health")
 async def health():
-    """Health check endpoint"""
-    return JSONResponse({"status": "ok", "timestamp": "ok"})
+    return {"status": "ok", "service": "ml-evaluator-api"}
 
 @app.post("/api/evaluate")
+@app.post("/evaluate")
 async def evaluate(candidates_file: UploadFile = File(...), rubric_file: UploadFile = File(...)):
-    """
-    Evaluate candidates against rubric.
-    Receives CSV and TXT files, returns JSON results.
-    """
     try:
-        # Read files
         candidates_data = await candidates_file.read()
         rubric_data = await rubric_file.read()
         
         candidates_text = candidates_data.decode('utf-8')
         rubric_text = rubric_data.decode('utf-8')
         
-        # Get ML engine
         ml_engine = get_ml_engine()
-        
-        # Process
         results = ml_engine(
             candidates_csv=candidates_text,
             rubric_text=rubric_text
@@ -69,14 +64,14 @@ async def evaluate(candidates_file: UploadFile = File(...), rubric_file: UploadF
         return JSONResponse(results)
         
     except Exception as e:
-        print(f"Evaluation error: {e}")
-        return JSONResponse({"error": str(e), "type": type(e).__name__}, status_code=400)
+        print(f"Error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=400)
 
-# Health check at root
 @app.get("/")
+@app.get("/api")
 async def root():
-    return JSONResponse({"message": "ML Evaluator API - Use /api/evaluate or /api/health"})
+    return {"message": "ML Evaluator API"}
 
-# For Vercel
+# Required for Vercel
 handler = app
 
