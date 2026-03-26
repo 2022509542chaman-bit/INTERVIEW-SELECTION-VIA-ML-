@@ -15,21 +15,32 @@ device = 'cpu'
 bi_encoder = None
 cross_encoder = None
 
-try:
-    print(f"[1/2] Loading Bi-Encoder: {BI_ENCODER_MODEL}")
-    bi_encoder = SentenceTransformer(BI_ENCODER_MODEL, device=device)
-    bi_encoder.encode(["warm-up"], normalize_embeddings=True, show_progress_bar=False)
-    print("      Bi-Encoder ready (warmed)")
-except Exception as e:
-    print(f"      Bi-Encoder failed: {e}")
+def _load_bi_encoder():
+    """Lazy load bi-encoder on first use."""
+    global bi_encoder
+    if bi_encoder is None:
+        try:
+            print(f"[1/2] Loading Bi-Encoder: {BI_ENCODER_MODEL}")
+            bi_encoder = SentenceTransformer(BI_ENCODER_MODEL, device=device)
+            bi_encoder.encode(["warm-up"], normalize_embeddings=True, show_progress_bar=False)
+            print("      Bi-Encoder ready (warmed)")
+        except Exception as e:
+            print(f"      Bi-Encoder failed: {e}")
+            raise
+    return bi_encoder
 
-try:
-    print(f"[2/2] Loading Cross-Encoder: {CROSS_ENCODER_MODEL}")
-    cross_encoder = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
-    cross_encoder.predict([("warm", "up")], show_progress_bar=False)
-    print("      Cross-Encoder ready (warmed)")
-except Exception as e:
-    print(f"      Cross-Encoder unavailable: {e}")
+def _load_cross_encoder():
+    """Lazy load cross-encoder on first use."""
+    global cross_encoder
+    if cross_encoder is None:
+        try:
+            print(f"[2/2] Loading Cross-Encoder: {CROSS_ENCODER_MODEL}")
+            cross_encoder = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
+            cross_encoder.predict([("warm", "up")], show_progress_bar=False)
+            print("      Cross-Encoder ready (warmed)")
+        except Exception as e:
+            print(f"      Cross-Encoder unavailable: {e}")
+    return cross_encoder
 
 
 TECH_TERMS = {
@@ -239,20 +250,22 @@ def evaluate_with_strict_model(candidates_df, rubric_text, strictness_threshold=
 
     # Bi-Encoder (batched, fast)
     t0 = time.time()
-    crit_emb = bi_encoder.encode(crit_texts, batch_size=64, convert_to_tensor=True, normalize_embeddings=True)
-    resp_emb = bi_encoder.encode(responses, batch_size=512, convert_to_tensor=True, normalize_embeddings=True, show_progress_bar=False)
+    be = _load_bi_encoder()
+    crit_emb = be.encode(crit_texts, batch_size=64, convert_to_tensor=True, normalize_embeddings=True)
+    resp_emb = be.encode(responses, batch_size=512, convert_to_tensor=True, normalize_embeddings=True, show_progress_bar=False)
     bi_scores = util.dot_score(resp_emb, crit_emb).cpu().numpy()
     t_bi = time.time() - t0
 
     # Cross-Encoder (precise)
     total_pairs = n_cand * n_crit
-    use_cross = cross_encoder is not None and total_pairs <= CROSS_ENCODER_PAIR_LIMIT
+    ce = _load_cross_encoder()
+    use_cross = ce is not None and total_pairs <= CROSS_ENCODER_PAIR_LIMIT
     cx_scores = np.zeros((n_cand, n_crit))
     t_cx = 0.0
     if use_cross:
         t1 = time.time()
         pairs = [(responses[i], crit_texts[j]) for i in range(n_cand) for j in range(n_crit)]
-        raw = cross_encoder.predict(pairs, batch_size=256, show_progress_bar=False)
+        raw = ce.predict(pairs, batch_size=256, show_progress_bar=False)
         cx_scores = sigmoid(np.array(raw).reshape(n_cand, n_crit))
         t_cx = time.time() - t1
 

@@ -26,3 +26,4 @@ Thumbs.db
 *.log
 ml-evaluator/backend/server.log
 .vite/
+.vercel
