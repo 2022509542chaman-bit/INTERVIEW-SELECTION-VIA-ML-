@@ -188,7 +188,7 @@ async def root():
 async def evaluate_candidates(
     candidates_file: UploadFile = File(...),
     rubric_file: UploadFile = File(...),
-    batch_name: str = Form(default=None),
+    batch_name: str | None = Form(default=None),
     db: Session = Depends(get_db),
 ):
     """Evaluate candidates and save results to database."""
