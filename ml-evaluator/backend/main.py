@@ -188,7 +188,6 @@ async def root():
 async def evaluate_candidates(
     candidates_file: UploadFile = File(...),
     rubric_file: UploadFile = File(...),
-    db: Session = Depends(get_db),
 ):
     """Evaluate candidates and save results to database."""
     try:
@@ -215,12 +214,17 @@ async def evaluate_candidates(
         if result.get("status") == "error":
             raise HTTPException(status_code=400, detail=result.get("message"))
 
-        # Save to database
-        rubric_hash = _hash_rubric(rubric_text)
-        batch_id = _save_candidates_to_db(
-            db, result.get("data", []), rubric_hash, None
-        )
-        result["batch_id"] = batch_id
+        # Save to database (optional)
+        try:
+            db = next(get_db())
+            rubric_hash = _hash_rubric(rubric_text)
+            batch_id = _save_candidates_to_db(
+                db, result.get("data", []), rubric_hash, None
+            )
+            result["batch_id"] = batch_id
+        except Exception as db_err:
+            print(f"DB save error (non-critical): {db_err}")
+            result["batch_id"] = 0
 
         return result
     except HTTPException:
